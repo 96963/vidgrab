@@ -1,6 +1,9 @@
 package com.vidgrab.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -118,6 +122,7 @@ fun HomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp)
     ) {
         Spacer(Modifier.height(16.dp))
@@ -136,6 +141,7 @@ fun HomeScreen(
             value = url,
             onValueChange = { url = it },
             modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
             placeholder = { Text("https://…") },
             leadingIcon = { Icon(Icons.Default.Link, contentDescription = null) },
             trailingIcon = {
@@ -154,7 +160,10 @@ fun HomeScreen(
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = { parse() },
-            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
             enabled = !loading && url.isNotBlank()
         ) {
             if (loading) {
@@ -191,7 +200,10 @@ fun HomeScreen(
     }
 
     if (showSettings) {
-        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettings = false },
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text("设置", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(12.dp))
@@ -239,7 +251,10 @@ fun HomeScreen(
                             updating = false
                         }
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
                 ) {
                     Text(if (updating) "更新中…" else "检查并更新 yt-dlp")
                 }
@@ -253,17 +268,25 @@ fun HomeScreen(
 private fun MediaInfoCard(media: MediaInfo, onDownload: (FormatOption) -> Unit) {
     var selected by remember(media) { mutableStateOf(media.formats.first()) }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AsyncImage(
-                    model = media.thumbnail,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(96.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                )
-                Spacer(Modifier.width(12.dp))
+                if (!media.thumbnail.isNullOrBlank()) {
+                    AsyncImage(
+                        model = media.thumbnail,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
                 Column {
                     Text(
                         media.title,
@@ -287,24 +310,29 @@ private fun MediaInfoCard(media: MediaInfo, onDownload: (FormatOption) -> Unit) 
             Text("选择格式", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(4.dp))
 
-            LazyColumn(modifier = Modifier.fillMaxWidth().height(180.dp)) {
-                items(media.formats) { format ->
+            Column(modifier = Modifier.fillMaxWidth()) {
+                media.formats.forEach { format ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { selected = format }
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
                             selected = selected == format,
                             onClick = { selected = format }
                         )
-                        Text(format.label, modifier = Modifier.weight(1f))
+                        Text(
+                            format.label,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                         if (format.filesize > 0) {
                             Text(
                                 formatSize(format.filesize),
-                                style = MaterialTheme.typography.bodySmall
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -314,7 +342,13 @@ private fun MediaInfoCard(media: MediaInfo, onDownload: (FormatOption) -> Unit) 
             Spacer(Modifier.height(8.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
-            Button(onClick = { onDownload(selected) }, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = { onDownload(selected) },
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
                 Icon(Icons.Default.Download, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("开始下载 · ${selected.label}")

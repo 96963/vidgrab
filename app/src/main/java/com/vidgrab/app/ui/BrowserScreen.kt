@@ -9,6 +9,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
@@ -136,6 +138,7 @@ fun BrowserScreen(
                 value = address,
                 onValueChange = { address = it },
                 modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
                 singleLine = true,
                 placeholder = { Text("输入网址") },
                 keyboardOptions = KeyboardOptions(
@@ -333,7 +336,10 @@ fun BrowserScreen(
     }
 
     if (showSheet) {
-        ModalBottomSheet(onDismissRequest = { showSheet = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showSheet = false },
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -377,7 +383,10 @@ fun BrowserScreen(
     }
 
     if (sheet == BrowserSheet.LOGS) {
-        ModalBottomSheet(onDismissRequest = { sheet = BrowserSheet.NONE }) {
+        ModalBottomSheet(
+            onDismissRequest = { sheet = BrowserSheet.NONE },
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -404,7 +413,10 @@ fun BrowserScreen(
     }
 
     if (sheet == BrowserSheet.MENU) {
-        ModalBottomSheet(onDismissRequest = { sheet = BrowserSheet.NONE }) {
+        ModalBottomSheet(
+            onDismissRequest = { sheet = BrowserSheet.NONE },
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 MenuItem("历史记录", "最近访问的网页") {
                     libraryTab = 0
@@ -434,7 +446,10 @@ fun BrowserScreen(
     }
 
     if (sheet == BrowserSheet.LIBRARY) {
-        ModalBottomSheet(onDismissRequest = { sheet = BrowserSheet.NONE }) {
+        ModalBottomSheet(
+            onDismissRequest = { sheet = BrowserSheet.NONE },
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -618,7 +633,26 @@ private fun DetectedRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(media.kind, style = MaterialTheme.typography.labelMedium)
+            val chipBg = when (media.kind) {
+                "HLS" -> MaterialTheme.colorScheme.primaryContainer
+                "DASH" -> DashSoft
+                "VIDEO", "MP4" -> GreenSoft
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+            val chipFg = when (media.kind) {
+                "HLS" -> MaterialTheme.colorScheme.primary
+                "DASH" -> Dash
+                "VIDEO", "MP4" -> Green
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(
+                media.kind,
+                style = MaterialTheme.typography.labelSmall,
+                color = chipFg,
+                modifier = Modifier
+                    .background(chipBg, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
             Text(
                 media.url,
                 style = MaterialTheme.typography.bodySmall,
