@@ -1,0 +1,99 @@
+# VidGrab 开发进度
+
+更新：2026-10-29
+
+## 目标
+逆向 `..` 下的 Seal 与 SuperX，做一个自己的 Android 下载 App。
+已确定：Android 原生（Kotlin + Compose），首版功能 = yt-dlp 站点解析下载 + 内置浏览器嗅探。
+
+## 环境
+| 组件 | 路径 |
+|---|---|
+| JDK 21 | `$JAVA_HOME` |
+| Android SDK（platform 35 / build-tools 35.0.0） | `..\.tools\android-sdk` |
+| Gradle 8.9 | `..\.tools\gradle-8.9` |
+| Gradle 用户目录（构建缓存） | `..\.tools\gradle-home` |
+| youtubedl-android 0.18.1 源码 | `..\.tools\src\youtubedl-android-0.18.1` |
+| 反编译结果 | `..\.tools\re-out\seal`、`..\.tools\re-out\superx` |
+| 工程 | `..\VidGrab`（包名 `com.vidgrab.app`） |
+
+下载源优先国内：阿里云 Maven、腾讯 Gradle 镜像、清华 PyPI、ghfast.top 代理 GitHub。
+
+## 已完成
+- [x] 逆向分析两个 APK（架构见下）
+- [x] 安装 Android SDK / Gradle
+- [x] 工程骨架：Gradle 配置、Manifest、基础资源
+- [x] 并入 youtubedl-android 0.18.1 源码与 arm64 jniLibs（Python 3.12、yt-dlp 2025.11.12、FFmpeg、QuickJS）
+- [x] Kotlin 业务：yt-dlp 封装、下载队列/前台服务/通知、Compose 三页、WebView 嗅探（含 Cookie/Referer/UA 透传）
+- [x] 编译 APK：`dist/VidGrab-1.0.0-debug-arm64.apk`（package `com.vidgrab.app`，targetSdk 35，仅 arm64-v8a，debug 签名）
+- [x] APK 静态校验：包名/权限/ABI/签名/内置库均正常
+
+## 真机验证（Xiaomi 24122RKC7C，Android 16，arm64）
+- [x] 安装与首次启动：Python 3.12 / FFmpeg / yt-dlp 正确解压到 no_backup
+- [x] 链接下载：bilibili 视频解析出 480p/360p，下载生成 10.3MB MP4，任务显示「已完成」
+- [x] 浏览器嗅探：W3Schools 页面识别出 HLS / MP4 / OGG，FAB 显示检测数量
+- [x] 嗅探→解析→下载：mov_bbb.mp4 解析并下载成功（788KB）
+- [x] 修复崩溃：`shouldInterceptRequest` 后台线程调用 WebView 方法导致 `A WebView method was called on thread 'ThreadPoolForeg'`，改为 PageState 快照
+- [x] 修复体验：切换页签后浏览器回到首页，改为记住最后访问的 URL
+- [x] 新增：浏览器后退按钮 + 系统返回键回退历史
+- [x] 新增：广告拦截（`assets/ad_hosts.txt` 域名黑名单 + 路径规则 + 可疑标签启发式），工具栏盾牌开关，实测拦截日志正常、正常网页不受影响
+- [x] 拦截增强：引入 EasyList / EasyPrivacy / EasyList China，生成约 9.6 万条域名规则 + 5800 条第三方规则 + 573 条例外；匹配改为域名后缀逐级查表，支持第三方判定
+- [x] 新增边下边播：Media3 ExoPlayer（HLS/DASH/MP4），嗅探列表每项加「播放」，真机验证 MP4 与 m3u8 均可播放；请求头复用嗅探结果
+- [x] 图标修复：改用 Adaptive Icon（背景/前景/monochrome）+ 五档 PNG + roundIcon，通知栏改用单色 `ic_stat_download`，桌面显示正常
+
+
+## 第 1 批「抓得到、不被墙」进度（2026-10-29）
+已完成并真机验证：
+- [x] 检测日志（来源/结果/时间），入口在嗅探列表标题栏
+- [x] 站点级广告拦截开关（长按盾牌，按主域持久化，禁用/恢复均验证）
+- [x] 查询参数 m3u8 误报收窄（HLS.js 演示页不再被当成媒体）
+已实现并验证（vivo V2156A / Android 11）：
+- [x] XHR/fetch 响应内容嗅探：本地页 `stream.txt` 返回 #EXTM3U，early（页面加载阶段）和 late（3 秒后）都被识别为 HLS
+- [x] 关键修复：document-start 注入（WebViewCompat.addDocumentStartJavaScript）+ bridge 惰性获取，解决加载阶段请求漏抓
+- [x] 请求拦截路径回归：本地 `local.m3u8` 正确识别
+- [x] 工具栏常驻「检测日志」按钮（无检测结果时也能打开）
+- [x] 调试入口：`am start --es browser_url <url>` 可直接让浏览器打开指定页面（自动化测试用）
+
+已实现未单独验证：
+- [ ] Origin 请求头透传
+- [ ] 非 http/https 主框架跳转拦截
+
+已知限制：
+- document-start 需要 WebView 支持 DOCUMENT_START_SCRIPT（现代 WebView 均支持）；不支持时退回 onPageFinished 注入，加载阶段请求会漏抓
+- vivo 会过滤 Log.d/w，调试日志改用应用内检测日志
+
+
+## 第 2 批「下得稳」进度（2026-10-29，vivo V2156A / Android 11）
+已完成并真机验证：
+- [x] 任务持久化：`filesDir/download_tasks.json`，保存状态/进度/文件路径；已完成的下载历史重启后仍在
+- [x] 断点续传：yt-dlp `--continue`；直链下载改为 `.part` + HTTP Range 续传
+- [x] 自动恢复：应用被杀后重启，未完成任务自动重新入队（实测 `.part` 2.09MB → 自动续传 → 40MB 完成）
+- [x] 手动重试：失败/取消任务显示「重试」，从 `.part` 继续（实测 2.09MB → 40MB）
+- [x] 并发与重试：`--concurrent-fragments 4`、`--retries 10`、`--fragment-retries 10`
+- [x] 修复：恢复下载时引擎未初始化（instance not initialized），下载前统一 ensureReady
+
+未单独验证：
+- 直链 Range 续传（代码已实现，测试文件走的是 yt-dlp 路径）
+- 服务器不支持 Range 时会从头重下（符合预期）
+
+已知行为：
+- 系统「强行停止」后不会继续下载，需重新打开 App 才会自动恢复
+- 部分第三方接口（如 HLS 分片）不支持续传时会整段重下
+
+
+## 浏览器历史/书签（2026-10-29，vivo V2156A / Android 11）
+- [x] 历史记录：访问 http/https 页面自动记录（标题/URL/时间），去重、上限 500
+- [x] 书签：收藏/取消当前页，列表删除
+- [x] 持久化：`filesDir/browser_data.json`，重启后仍在
+- [x] 工具栏改为「⋮ 菜单」：历史记录 / 书签 / 收藏当前页 / 检测日志 / 清空检测
+- [x] 点历史或书签条目直接在当前浏览器跳转
+- 验证：记录→重启→仍在；收藏→重启→仍在；删除书签、历史跳转均正常
+
+## 待办
+- [ ] 可选：更多 ABI（x86_64 模拟器）、代理设置、播放页专用解析规则
+- [ ] 已知限制：切换页签会重新加载当前页面（不保留播放进度）；仅 arm64；debug 签名
+- [ ] 许可证：youtubedl-android 为 GPL-3.0，发布需按 GPL 开源
+
+## 逆向结论摘要
+- **Seal**：youtubedl-android + yt-dlp zipapp + aria2c + FFmpeg；任务状态机、3 并发、进度回调；Room/MMKV/Koin。
+- **SuperX**：WebView + 三种检测器（URL 规则 / 拦截请求并主动 GET 探测 Content-Type / M3U8-MPD 检测）；直链、自研 HLS-DASH、yt-dlp 四种下载 Worker；内嵌 Xray、Rust 广告拦截。

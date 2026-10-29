@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VidGrab</string>
+    <string name="tab_home">下载</string>
+    <string name="tab_browser">浏览器</string>
+    <string name="tab_tasks">任务</string>
+    <string name="notification_channel">下载通知</string>
+    <string name="notification_running">正在下载…</string>
+    <string name="notification_done">下载完成</string>
+    <string name="notification_error">下载失败</string>
+</resources>
