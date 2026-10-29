@@ -2,6 +2,8 @@
 
 一个基于 yt-dlp 的 Android 视频下载器，参考 Seal 与 SuperX 的逆向分析结果实现。
 
+介绍页：https://vidgrab-574.pages.dev/
+
 ## 功能
 
 - **链接下载**：粘贴任意 yt-dlp 支持的站点链接，解析标题/缩略图/格式后下载
@@ -18,7 +20,8 @@
 
 ## 落地页与视觉规范
 
-- 落地页：`site/index.html`（单文件，无外部依赖；可直接部署到任意静态托管，或在 Gitee Pages 中把发布目录设为 `site`）
+- 线上页面：https://vidgrab-574.pages.dev/
+- 落地页源码：`site/index.html`（单文件，无外部依赖，可部署到任意静态托管）
 - 视觉规范：`docs/design/vidgrab-visual-spec.md`（色彩、字体、间距、组件、Compose 映射）
 
 落地页面向中文 Android 用户，首屏用一张 CSS 绘制的嗅探面板示意 App 的核心交互：检测 HLS/DASH/MP4，按分片播放或下载。
