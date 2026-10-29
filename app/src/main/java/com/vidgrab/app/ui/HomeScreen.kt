@@ -19,19 +19,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,8 +56,10 @@ import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.FormatOption
 import com.vidgrab.app.core.MediaInfo
 import com.vidgrab.app.core.YtDlpEngine
+import com.vidgrab.app.core.YtDlpUpdater
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     initialUrl: String?,
@@ -67,6 +74,18 @@ fun HomeScreen(
     var loading by remember { mutableStateOf(false) }
     var info by remember { mutableStateOf<MediaInfo?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    var showSettings by remember { mutableStateOf(false) }
+    var ytdlpVersion by remember { mutableStateOf<String?>(null) }
+    var updating by remember { mutableStateOf(false) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
+    var updateProgress by remember { mutableFloatStateOf(-1f) }
+
+    LaunchedEffect(showSettings) {
+        if (showSettings) {
+            ytdlpVersion = YtDlpUpdater.installedVersion(context)
+        }
+    }
 
     LaunchedEffect(initialUrl) {
         if (!initialUrl.isNullOrBlank()) {
@@ -102,7 +121,16 @@ fun HomeScreen(
             .padding(horizontal = 16.dp)
     ) {
         Spacer(Modifier.height(16.dp))
-        Text("粘贴视频链接", style = MaterialTheme.typography.titleLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "粘贴视频链接",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = { showSettings = true }) {
+                Icon(Icons.Default.Settings, contentDescription = "设置")
+            }
+        }
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = url,
@@ -158,6 +186,64 @@ fun HomeScreen(
                     audioOnly = format.audioOnly
                 )
                 onTaskStarted()
+            }
+        }
+    }
+
+    if (showSettings) {
+        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text("设置", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "yt-dlp 版本：${ytdlpVersion ?: "读取中…"}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(8.dp))
+                if (updating) {
+                    if (updateProgress >= 0f) {
+                        LinearProgressIndicator(
+                            progress = { updateProgress },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text("正在下载更新…", style = MaterialTheme.typography.bodySmall)
+                }
+                updateMessage?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    enabled = !updating,
+                    onClick = {
+                        scope.launch {
+                            updating = true
+                            updateMessage = null
+                            updateProgress = -1f
+                            val result = YtDlpUpdater.update(context) { progress, _ ->
+                                updateProgress = progress
+                            }
+                            updateMessage = when (result) {
+                                is YtDlpUpdater.Result.Updated ->
+                                    "已更新到 ${result.version}，新任务将使用新版本"
+                                is YtDlpUpdater.Result.UpToDate ->
+                                    "已是最新版本 ${result.version ?: ""}"
+                                is YtDlpUpdater.Result.Failed -> result.message
+                            }
+                            ytdlpVersion = YtDlpUpdater.installedVersion(context)
+                            updateProgress = -1f
+                            updating = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (updating) "更新中…" else "检查并更新 yt-dlp")
+                }
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
