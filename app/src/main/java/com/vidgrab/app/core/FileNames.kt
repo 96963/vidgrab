@@ -107,7 +107,8 @@ object FileNames {
         var candidate = File(dir, "$base$suffix")
         if (current != null && candidate.absolutePath == current.absolutePath) return candidate
         var index = 2
-        while (candidate.exists()) {
+        // 候选正好是当前文件时不重命名，避免 (2) 变 (3) 这类连锁改名
+        while (candidate.exists() && candidate.absolutePath != current?.absolutePath) {
             candidate = File(dir, "$base ($index)$suffix")
             index++
         }

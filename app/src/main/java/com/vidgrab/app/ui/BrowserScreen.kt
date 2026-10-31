@@ -29,11 +29,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -48,6 +48,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -57,8 +58,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -74,6 +79,7 @@ import com.vidgrab.app.core.DetectedMedia
 import com.vidgrab.app.core.DetectionLogEntry
 import com.vidgrab.app.core.MediaSniffer
 import com.vidgrab.app.core.SiteSettings
+import kotlinx.coroutines.delay
 import java.net.URI
 
 const val HOME_URL = "https://cn.bing.com"
@@ -100,7 +106,10 @@ fun BrowserScreen(
     onDownload: (String, String?) -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var address by remember { mutableStateOf(initialUrl) }
+    var addressField by remember { mutableStateOf(TextFieldValue(initialUrl)) }
+    var addressFocused by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var showSheet by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf(BrowserSheet.NONE) }
@@ -120,6 +129,16 @@ fun BrowserScreen(
         siteKey != null && SiteSettings.isAdBlockDisabled(address)
     }
 
+    // 聚焦后等一帧再全选，避免被点击时的光标定位覆盖
+    LaunchedEffect(addressFocused) {
+        if (addressFocused) {
+            delay(60)
+            addressField = addressField.copy(
+                selection = TextRange(0, addressField.text.length)
+            )
+        }
+    }
+
     SideEffect { pageState.adBlock = adBlockEnabled }
 
     BackHandler(enabled = canGoBack) {
@@ -134,21 +153,6 @@ fun BrowserScreen(
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedTextField(
-                value = address,
-                onValueChange = { address = it },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
-                singleLine = true,
-                placeholder = { Text("输入网址") },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Uri,
-                    imeAction = ImeAction.Go
-                ),
-                keyboardActions = KeyboardActions(onGo = {
-                    webView?.loadUrl(normalizeUrl(address))
-                })
-            )
             IconButton(
                 onClick = {
                     webView?.goBack()
@@ -163,28 +167,33 @@ fun BrowserScreen(
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 )
             }
+            OutlinedTextField(
+                value = addressField,
+                onValueChange = { addressField = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { focus -> addressFocused = focus.isFocused },
+                shape = RoundedCornerShape(8.dp),
+                singleLine = true,
+                placeholder = { Text("输入网址") },
+                trailingIcon = {
+                    if (addressField.text.isNotEmpty()) {
+                        IconButton(onClick = { addressField = TextFieldValue("") }) {
+                            Icon(Icons.Default.Close, contentDescription = "清空")
+                        }
+                    }
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Go
+                ),
+                keyboardActions = KeyboardActions(onGo = {
+                    webView?.loadUrl(normalizeUrl(addressField.text))
+                    focusManager.clearFocus()
+                })
+            )
             IconButton(onClick = { webView?.reload() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新")
-            }
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .combinedClickable(
-                        onClick = { adBlockEnabled = !adBlockEnabled },
-                        onLongClick = { showSiteDialog = true }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.Shield,
-                    contentDescription = when {
-                        !adBlockEnabled -> "广告拦截：已关闭"
-                        siteDisabled -> "广告拦截：本站已禁用"
-                        else -> "广告拦截：开（长按对本站设置）"
-                    },
-                    tint = if (adBlockEnabled && !siteDisabled) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
-                )
             }
             IconButton(onClick = { sheet = BrowserSheet.MENU }) {
                 Icon(Icons.Default.MoreVert, contentDescription = "菜单")
@@ -300,6 +309,7 @@ fun BrowserScreen(
                             BrowserStore.addHistory(url, view.title)
                             view.evaluateJavascript(MediaSniffer.injectedJs, null)
                             address = url
+                            if (!addressFocused) addressField = TextFieldValue(url)
                             onUrlChange(url)
                             canGoBack = view.canGoBack()
                         }
@@ -314,6 +324,7 @@ fun BrowserScreen(
                             pageState.title = view.title
                             BrowserStore.addHistory(url, view.title)
                             address = url
+                            if (!addressFocused) addressField = TextFieldValue(url)
                             onUrlChange(url)
                             canGoBack = view.canGoBack()
                         }
@@ -435,6 +446,21 @@ fun BrowserScreen(
                     if (bookmarked) BrowserStore.removeBookmark(address)
                     else BrowserStore.addBookmark(address, pageState.title)
                     sheet = BrowserSheet.NONE
+                }
+                MenuItem(
+                    if (adBlockEnabled) "关闭广告拦截" else "开启广告拦截",
+                    when {
+                        siteDisabled -> "本站当前已单独禁用"
+                        adBlockEnabled -> "当前开启"
+                        else -> "当前关闭"
+                    }
+                ) {
+                    adBlockEnabled = !adBlockEnabled
+                    sheet = BrowserSheet.NONE
+                }
+                MenuItem("本站广告拦截设置", "当前站点") {
+                    sheet = BrowserSheet.NONE
+                    showSiteDialog = true
                 }
                 MenuItem("检测日志", "查看嗅探来源与结果") { sheet = BrowserSheet.LOGS }
                 MenuItem("清空检测", "清空已嗅探到的媒体地址") {

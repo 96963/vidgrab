@@ -60,6 +60,10 @@ fun TasksScreen() {
     var deleteFile by remember { mutableStateOf(true) }
     var renameTarget by remember { mutableStateOf<DownloadTask?>(null) }
     var showClearDialog by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showBatchDialog by remember { mutableStateOf(false) }
+    var batchDeleteFiles by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -71,12 +75,36 @@ fun TasksScreen() {
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("下载任务", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(
-                onClick = { showClearDialog = true },
-                enabled = tasks.any { it.isFinished }
-            ) {
-                Text("清除已完成")
+            Text(
+                if (selecting) "已选 ${selected.size} 项" else "下载任务",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f)
+            )
+            if (selecting) {
+                TextButton(onClick = {
+                    selected = if (selected.size == tasks.size) emptySet()
+                    else tasks.map { it.id }.toSet()
+                }) { Text(if (selected.size == tasks.size && tasks.isNotEmpty()) "全不选" else "全选") }
+                TextButton(onClick = {
+                    selecting = false
+                    selected = emptySet()
+                }) { Text("取消") }
+                TextButton(
+                    onClick = { showBatchDialog = true },
+                    enabled = selected.isNotEmpty()
+                ) { Text("删除所选") }
+            } else {
+                TextButton(
+                    onClick = {
+                        selecting = true
+                        selected = emptySet()
+                    },
+                    enabled = tasks.isNotEmpty()
+                ) { Text("选择") }
+                TextButton(
+                    onClick = { showClearDialog = true },
+                    enabled = tasks.any { it.isFinished }
+                ) { Text("清除已完成") }
             }
         }
         if (tasks.isEmpty()) {
@@ -91,6 +119,11 @@ fun TasksScreen() {
             items(tasks, key = { it.id }) { task ->
                 TaskCard(
                     task = task,
+                    selecting = selecting,
+                    selected = task.id in selected,
+                    onSelect = {
+                        selected = if (task.id in selected) selected - task.id else selected + task.id
+                    },
                     onCancel = { DownloadManager.cancel(task.id) },
                     onRemove = {
                         deleteFile = DownloadManager.filesOf(task).isNotEmpty()
@@ -178,6 +211,44 @@ fun TasksScreen() {
         )
     }
 
+    if (showBatchDialog) {
+        val chosen = tasks.filter { it.id in selected }
+        val withFiles = chosen.count { DownloadManager.filesOf(it).isNotEmpty() }
+        AlertDialog(
+            onDismissRequest = { showBatchDialog = false },
+            title = { Text("删除 ${chosen.size} 个任务") },
+            text = {
+                Column {
+                    Text("选中的任务会从列表移除，其余任务不受影响。")
+                    if (withFiles > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { batchDeleteFiles = !batchDeleteFiles }
+                        ) {
+                            Checkbox(
+                                checked = batchDeleteFiles,
+                                onCheckedChange = { batchDeleteFiles = it }
+                            )
+                            Text("同时删除文件（$withFiles 个）")
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    DownloadManager.removeAll(selected, batchDeleteFiles)
+                    showBatchDialog = false
+                    selecting = false
+                    selected = emptySet()
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
     renameTarget?.let { task ->
         var name by remember(task.id) { mutableStateOf(task.title) }
         AlertDialog(
@@ -194,7 +265,11 @@ fun TasksScreen() {
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "扩展名保持不变；遇到重名会自动加序号。",
+                        if (task.state == TaskState.DONE) {
+                            "扩展名保持不变；遇到重名会自动加序号。"
+                        } else {
+                            "下载完成后按新名称保存；遇到重名会自动加序号。"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -219,6 +294,9 @@ fun TasksScreen() {
 @Composable
 private fun TaskCard(
     task: DownloadTask,
+    selecting: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
     onCancel: () -> Unit,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
@@ -226,7 +304,9 @@ private fun TaskCard(
     onOpen: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (selecting) Modifier.clickable(onClick = onSelect) else Modifier),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -234,6 +314,9 @@ private fun TaskCard(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (selecting) {
+                    Checkbox(checked = selected, onCheckedChange = { onSelect() })
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         task.title,
@@ -262,9 +345,14 @@ private fun TaskCard(
                         }
                     }
                 }
-                when (task.state) {
-                    TaskState.DOWNLOADING, TaskState.QUEUED -> IconButton(onClick = onCancel) {
-                        Icon(Icons.Default.Stop, contentDescription = "取消")
+                if (!selecting) when (task.state) {
+                    TaskState.DOWNLOADING, TaskState.QUEUED -> {
+                        IconButton(onClick = onRename) {
+                            Icon(Icons.Default.Edit, contentDescription = "重命名")
+                        }
+                        IconButton(onClick = onCancel) {
+                            Icon(Icons.Default.Stop, contentDescription = "取消")
+                        }
                     }
                     TaskState.DONE -> {
                         IconButton(onClick = onOpen) {

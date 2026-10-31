@@ -103,11 +103,13 @@ object DownloadManager {
         jobs[task.id] = job
     }
 
-    private suspend fun runTask(task: DownloadTask) {
+    private suspend fun runTask(queued: DownloadTask) {
+        // 排队期间可能改过标题，用最新状态开跑
+        val task = _tasks.value.firstOrNull { it.id == queued.id } ?: queued
         update(task.id) { it.copy(state = TaskState.DOWNLOADING, error = null) }
         Notifications.showTask(appContext, task.copy(state = TaskState.DOWNLOADING))
         try {
-            val file = YtDlpEngine.download(
+            val produced = YtDlpEngine.download(
                 appContext,
                 task,
                 onProgress = { progress, speed, eta ->
@@ -118,10 +120,13 @@ object DownloadManager {
                     update(task.id) { it.copy(filePath = path) }
                 }
             )
+            // 下载中可能改过名，落盘时以最新标题为准
+            val current = _tasks.value.firstOrNull { it.id == task.id }
+            val file = renameFinished(produced, current?.title ?: task.title)
             update(task.id) {
                 it.copy(state = TaskState.DONE, progress = 1f, filePath = file?.absolutePath)
             }
-            Notifications.showDone(appContext, task.title)
+            Notifications.showDone(appContext, current?.title ?: task.title)
         } catch (e: YoutubeDL.CanceledException) {
             update(task.id) { it.copy(state = TaskState.CANCELED) }
         } catch (e: Throwable) {
@@ -157,6 +162,22 @@ object DownloadManager {
         maybeStopService()
     }
 
+    /** 批量删除选中的任务；deleteFile 为 true 时连同文件一起删除。 */
+    fun removeAll(ids: Collection<String>, deleteFile: Boolean = false) {
+        if (ids.isEmpty()) return
+        val targets = _tasks.value.filter { it.id in ids }
+        targets.forEach { task ->
+            if (task.state == TaskState.QUEUED || task.state == TaskState.DOWNLOADING) {
+                cancel(task.id)
+            }
+            jobs.remove(task.id)
+            if (deleteFile) deleteTaskFiles(task)
+        }
+        _tasks.update { list -> list.filterNot { it.id in ids } }
+        persist()
+        maybeStopService()
+    }
+
     /** 清除已结束的任务；deleteFiles 为 true 时连带删除它们留下的文件。 */
     fun clearFinished(deleteFiles: Boolean = false) {
         val finished = _tasks.value.filter {
@@ -169,13 +190,22 @@ object DownloadManager {
         persist()
     }
 
-    /** 重命名已完成任务的文件（同时更新任务标题）。 */
+    /**
+     * 重命名任务：已完成的任务立即改文件名；
+     * 排队/下载中的任务先改标题，下载完成后按新标题落盘。
+     */
     fun rename(id: String, newTitle: String): Boolean {
         val task = _tasks.value.firstOrNull { it.id == id } ?: return false
-        if (task.state != TaskState.DONE) return false
+        val base = FileNames.clean(newTitle).ifBlank { return false }
+        if (task.state != TaskState.DONE) {
+            _tasks.update { list ->
+                list.map { if (it.id == id) it.copy(title = base) else it }
+            }
+            persist()
+            return true
+        }
         val file = task.filePath?.let(::File) ?: return false
         if (!file.exists()) return false
-        val base = FileNames.clean(newTitle).ifBlank { return false }
         val dir = file.parentFile ?: return false
         val target = FileNames.uniqueFile(dir, base, file.extension, file)
         val moved = target == file || runCatching { file.renameTo(target) }.getOrDefault(false)
@@ -187,6 +217,16 @@ object DownloadManager {
         }
         persist()
         return true
+    }
+
+    /** 下载完成时按任务的最新标题落盘（下载中改过名也能生效）。 */
+    private fun renameFinished(file: File?, title: String): File? {
+        if (file == null || !file.exists()) return file
+        val base = FileNames.clean(title)
+        if (base.isBlank() || file.nameWithoutExtension == base) return file
+        val dir = file.parentFile ?: return file
+        val target = FileNames.uniqueFile(dir, base, file.extension, file)
+        return if (runCatching { file.renameTo(target) }.getOrDefault(false)) target else file
     }
 
     /** 任务在磁盘上可能存在的文件：成品、.part 续传文件、.ytdl 元数据。 */
