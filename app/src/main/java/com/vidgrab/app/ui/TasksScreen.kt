@@ -3,6 +3,7 @@ package com.vidgrab.app.ui
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,22 +16,29 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -48,6 +56,11 @@ fun TasksScreen() {
     val tasks by DownloadManager.tasks.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    var deleteTarget by remember { mutableStateOf<DownloadTask?>(null) }
+    var deleteFile by remember { mutableStateOf(true) }
+    var renameTarget by remember { mutableStateOf<DownloadTask?>(null) }
+    var showClearDialog by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -59,7 +72,10 @@ fun TasksScreen() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("下载任务", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = { DownloadManager.clearFinished() }) {
+            TextButton(
+                onClick = { showClearDialog = true },
+                enabled = tasks.any { it.isFinished }
+            ) {
                 Text("清除已完成")
             }
         }
@@ -76,14 +92,127 @@ fun TasksScreen() {
                 TaskCard(
                     task = task,
                     onCancel = { DownloadManager.cancel(task.id) },
-                    onRemove = { DownloadManager.remove(task.id) },
+                    onRemove = {
+                        deleteFile = DownloadManager.filesOf(task).isNotEmpty()
+                        deleteTarget = task
+                    },
                     onRetry = { DownloadManager.retry(task.id) },
+                    onRename = { renameTarget = task },
                     onOpen = {
                         task.filePath?.let { openFile(context, it) }
                     }
                 )
             }
         }
+    }
+
+    deleteTarget?.let { task ->
+        val hasFiles = DownloadManager.filesOf(task).isNotEmpty()
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除任务") },
+            text = {
+                Column {
+                    Text(task.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(12.dp))
+                    if (hasFiles) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { deleteFile = !deleteFile }
+                        ) {
+                            Checkbox(checked = deleteFile, onCheckedChange = { deleteFile = it })
+                            Text("同时删除文件")
+                        }
+                    } else {
+                        Text(
+                            "该任务没有可删除的文件。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    DownloadManager.remove(task.id, deleteFile)
+                    deleteTarget = null
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showClearDialog) {
+        val finished = tasks.filter { it.isFinished }
+        val withFiles = finished.count { DownloadManager.filesOf(it).isNotEmpty() }
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = { Text("清除已完成") },
+            text = {
+                Column {
+                    Text("将移除 ${finished.size} 个已结束的任务。")
+                    if (withFiles > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "其中 $withFiles 个带有下载文件，可选择是否一起删除。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    DownloadManager.clearFinished(deleteFiles = true)
+                    showClearDialog = false
+                }) { Text("连文件删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    DownloadManager.clearFinished(deleteFiles = false)
+                    showClearDialog = false
+                }) { Text("仅删记录") }
+            }
+        )
+    }
+
+    renameTarget?.let { task ->
+        var name by remember(task.id) { mutableStateOf(task.title) }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名文件") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("文件名") }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "扩展名保持不变；遇到重名会自动加序号。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = name.isNotBlank(),
+                    onClick = {
+                        DownloadManager.rename(task.id, name)
+                        renameTarget = null
+                    }
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text("取消") }
+            }
+        )
     }
 }
 
@@ -93,6 +222,7 @@ private fun TaskCard(
     onCancel: () -> Unit,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
+    onRename: () -> Unit,
     onOpen: () -> Unit
 ) {
     Card(
@@ -120,13 +250,32 @@ private fun TaskCard(
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
+                    if (task.state == TaskState.DONE) {
+                        fileLine(task)?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
                 when (task.state) {
                     TaskState.DOWNLOADING, TaskState.QUEUED -> IconButton(onClick = onCancel) {
                         Icon(Icons.Default.Stop, contentDescription = "取消")
                     }
-                    TaskState.DONE -> IconButton(onClick = onOpen) {
-                        Icon(Icons.Default.OpenInNew, contentDescription = "打开")
+                    TaskState.DONE -> {
+                        IconButton(onClick = onOpen) {
+                            Icon(Icons.Default.OpenInNew, contentDescription = "打开")
+                        }
+                        IconButton(onClick = onRename) {
+                            Icon(Icons.Default.Edit, contentDescription = "重命名")
+                        }
+                        IconButton(onClick = onRemove) {
+                            Icon(Icons.Default.Delete, contentDescription = "删除")
+                        }
                     }
                     TaskState.ERROR, TaskState.CANCELED -> {
                         IconButton(onClick = onRetry) {
@@ -159,6 +308,17 @@ private fun TaskCard(
             }
         }
     }
+}
+
+private val DownloadTask.isFinished: Boolean
+    get() = state == TaskState.DONE || state == TaskState.ERROR || state == TaskState.CANCELED
+
+/** 已完成任务显示相对路径与文件大小。 */
+private fun fileLine(task: DownloadTask): String? {
+    val file = task.filePath?.let(::File) ?: return null
+    if (!file.exists()) return null
+    val size = formatSize(file.length())
+    return if (size.isBlank()) "VidGrab/${file.name}" else "VidGrab/${file.name} · $size"
 }
 
 private fun stateText(task: DownloadTask): String = when (task.state) {

@@ -97,7 +97,7 @@ private enum class BrowserSheet { NONE, MENU, LIBRARY, LOGS }
 fun BrowserScreen(
     initialUrl: String,
     onUrlChange: (String) -> Unit,
-    onDownload: (String) -> Unit
+    onDownload: (String, String?) -> Unit
 ) {
     val context = LocalContext.current
     var address by remember { mutableStateOf(initialUrl) }
@@ -371,7 +371,7 @@ fun BrowserScreen(
                             },
                             onDownload = {
                                 showSheet = false
-                                onDownload(media.url)
+                                onDownload(media.url, media.pageTitle)
                             }
                         )
                         HorizontalDivider()

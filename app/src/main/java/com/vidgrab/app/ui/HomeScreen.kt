@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.vidgrab.app.core.DownloadManager
+import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.FormatOption
 import com.vidgrab.app.core.MediaInfo
 import com.vidgrab.app.core.YtDlpEngine
@@ -67,6 +68,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     initialUrl: String?,
+    initialTitle: String? = null,
     onConsumed: () -> Unit,
     onTaskStarted: () -> Unit
 ) {
@@ -98,7 +100,12 @@ fun HomeScreen(
             error = null
             loading = true
             runCatching { YtDlpEngine.fetchInfo(context, initialUrl) }
-                .onSuccess { info = it }
+                .onSuccess { parsed ->
+                    // 嗅探到的媒体常解析不出标题，用页面标题兜底
+                    info = parsed.copy(
+                        title = FileNames.resolveTitle(parsed.title, parsed.webpageUrl, initialTitle)
+                    )
+                }
                 .onFailure { error = it.message ?: "解析失败" }
             loading = false
             onConsumed()

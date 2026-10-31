@@ -39,6 +39,7 @@ import com.vidgrab.app.ui.VidGrabTheme
 class MainActivity : ComponentActivity() {
 
     private val pendingUrl = mutableStateOf<String?>(null)
+    private val pendingTitle = mutableStateOf<String?>(null)
     private val browserUrl = mutableStateOf(HOME_URL)
     private val selectedTab = mutableIntStateOf(0)
 
@@ -87,14 +88,19 @@ class MainActivity : ComponentActivity() {
                         when (tab) {
                             0 -> HomeScreen(
                                 initialUrl = pending,
-                                onConsumed = { pendingUrl.value = null },
+                                initialTitle = pendingTitle.value,
+                                onConsumed = {
+                                    pendingUrl.value = null
+                                    pendingTitle.value = null
+                                },
                                 onTaskStarted = { tab = 2 }
                             )
                             1 -> BrowserScreen(
                                 initialUrl = currentBrowserUrl,
                                 onUrlChange = { browserUrl.value = it },
-                                onDownload = { url ->
+                                onDownload = { url, title ->
                                     pendingUrl.value = url
+                                    pendingTitle.value = title
                                     tab = 0
                                 }
                             )

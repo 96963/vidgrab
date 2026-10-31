@@ -53,7 +53,10 @@ object YtDlpEngine {
                 e.message?.contains("Unsupported URL", ignoreCase = true) == true
             ) {
                 return@withContext MediaInfo(
-                    title = url.substringBefore('?').substringAfterLast('/'),
+                    title = FileNames.resolveTitle(
+                        url.substringBefore('?').substringAfterLast('/'),
+                        url
+                    ),
                     uploader = null,
                     durationSeconds = 0,
                     thumbnail = null,
@@ -72,7 +75,11 @@ object YtDlpEngine {
             throw e
         }
         MediaInfo(
-            title = info.title ?: info.fulltitle ?: url,
+            // 网页标题常带站点名/清晰度后缀，也可能干脆是 URL，统一清洗
+            title = FileNames.resolveTitle(
+                info.title ?: info.altTitle ?: info.fulltitle ?: info.track,
+                info.webpageUrl ?: url
+            ),
             uploader = info.uploader,
             durationSeconds = info.duration,
             thumbnail = info.thumbnail ?: info.thumbnails?.lastOrNull()?.url,
@@ -142,11 +149,12 @@ object YtDlpEngine {
     suspend fun download(
         context: Context,
         task: DownloadTask,
-        onProgress: (Float, String, String) -> Unit
+        onProgress: (Float, String, String) -> Unit,
+        onFile: (String) -> Unit = {}
     ): File? {
         if (task.selector == DirectDownloader.DIRECT_SELECTOR) {
             return withContext(Dispatchers.IO) {
-                DirectDownloader.download(context, task, onProgress)
+                DirectDownloader.download(context, task, onProgress, onFile)
             }
         }
         // 重启后恢复的下载可能没有经过解析，必须先确保引擎就绪
@@ -178,6 +186,10 @@ object YtDlpEngine {
         }
 
         YoutubeDL.getInstance().execute(request, processId = task.id) { progress, eta, line ->
+            // 记下 yt-dlp 实际写入的路径，取消/删除时可据此清掉 .part
+            if (!line.isNullOrBlank()) {
+                destinationOf(line)?.let(onFile)
+            }
             val speed = line?.let { speedRegex.find(it)?.groupValues?.get(1) } ?: ""
             val etaText = when {
                 eta > 0 -> formatDuration(eta)
@@ -187,7 +199,7 @@ object YtDlpEngine {
             onProgress((progress / 100f).coerceIn(0f, 1f), speed, etaText)
         }
 
-        return dir.listFiles()
+        val produced = dir.listFiles()
             ?.filter {
                 it.isFile &&
                     !it.name.endsWith(".part") &&
@@ -198,6 +210,37 @@ object YtDlpEngine {
             ?: dir.listFiles()
                 ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
                 ?.maxByOrNull { it.lastModified() }
+        return renameToTitle(produced, task.title)
+    }
+
+    /** yt-dlp 输出里出现的目标文件路径。 */
+    private val destinationPatterns = listOf(
+        Regex("""^\[download\] Destination: (.+)$"""),
+        Regex("""^\[download\] (.+) has already been downloaded$"""),
+        Regex("""^\[Merger\] Merging formats into "(.+)"$"""),
+        Regex("""^\[ExtractAudio\] Destination: (.+)$"""),
+        Regex("""^\[FixupM3u8\] .*? to "(.+)"$"""),
+        Regex("""^\[FixupM4a\] .*? to "(.+)"$"""),
+        Regex("""^\[MoveFiles\] Moving file ".+?" to "(.+)"$""")
+    )
+
+    private fun destinationOf(line: String): String? {
+        val text = line.trim()
+        destinationPatterns.forEach { pattern ->
+            pattern.find(text)?.let { return it.groupValues[1] }
+        }
+        return null
+    }
+
+    /** 下载完成后按清洗过的标题重命名，避免把网页标题原样当文件名。 */
+    private fun renameToTitle(file: File?, title: String): File? {
+        if (file == null) return null
+        val base = FileNames.clean(title)
+        if (base.isBlank()) return file
+        val parent = file.parentFile ?: return file
+        val target = FileNames.uniqueFile(parent, base, file.extension, file)
+        if (target == file) return file
+        return if (runCatching { file.renameTo(target) }.getOrDefault(false)) target else file
     }
 
     fun outputDir(context: Context): File {

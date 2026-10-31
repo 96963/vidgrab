@@ -6,7 +6,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLDecoder
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 
@@ -41,12 +40,15 @@ object DirectDownloader {
     fun download(
         context: Context,
         task: DownloadTask,
-        onProgress: (Float, String, String) -> Unit
+        onProgress: (Float, String, String) -> Unit,
+        onFile: (String) -> Unit = {}
     ): File {
         cancelled.remove(task.id)
         val dir = YtDlpEngine.outputDir(context)
-        val baseName = safeFileName(task.url, task.title)
+        val baseName = FileNames.directFileName(task.title, task.url)
         val part = File(dir, "$baseName.part")
+        // 取消或删除任务时，据此找到未完成的 .part
+        onFile(part.absolutePath)
         var existing = if (part.exists()) part.length() else 0L
 
         val connection = (URL(task.url).openConnection() as HttpURLConnection).apply {
@@ -128,22 +130,6 @@ object DirectDownloader {
             index++
         }
         return if (part.renameTo(target)) target else part
-    }
-
-    private fun safeFileName(url: String, title: String): String {
-        val raw = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
-        val decoded = runCatching { URLDecoder.decode(raw, "UTF-8") }.getOrNull().orEmpty()
-        var name = decoded
-            .replace(Regex("""[\\/:*?"<>|]"""), "_")
-            .takeIf { it.isNotBlank() }
-            ?: title.replace(Regex("""[\\/:*?"<>|]"""), "_").takeIf { it.isNotBlank() }
-            ?: "video"
-        var ext = name.substringAfterLast('.', "").lowercase()
-        if (ext !in mediaExtensions) {
-            ext = "mp4"
-            name = if (name.contains('.')) name.substringBeforeLast('.') + ".$ext" else "$name.$ext"
-        }
-        return name
     }
 
     private fun formatSpeed(bytesPerSecond: Double): String {

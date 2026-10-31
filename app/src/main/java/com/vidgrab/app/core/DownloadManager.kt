@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -106,9 +107,17 @@ object DownloadManager {
         update(task.id) { it.copy(state = TaskState.DOWNLOADING, error = null) }
         Notifications.showTask(appContext, task.copy(state = TaskState.DOWNLOADING))
         try {
-            val file = YtDlpEngine.download(appContext, task) { progress, speed, eta ->
-                update(task.id) { it.copy(progress = progress, speed = speed, eta = eta) }
-            }
+            val file = YtDlpEngine.download(
+                appContext,
+                task,
+                onProgress = { progress, speed, eta ->
+                    update(task.id) { it.copy(progress = progress, speed = speed, eta = eta) }
+                },
+                onFile = { path ->
+                    // 下载过程中就记下路径，取消后删除任务也能清掉 .part
+                    update(task.id) { it.copy(filePath = path) }
+                }
+            )
             update(task.id) {
                 it.copy(state = TaskState.DONE, progress = 1f, filePath = file?.absolutePath)
             }
@@ -135,17 +144,69 @@ object DownloadManager {
         }
     }
 
-    fun remove(id: String) {
+    /** 删除任务；deleteFile 为 true 时连同下载的文件与 .part 续传文件一起删除。 */
+    fun remove(id: String, deleteFile: Boolean = false) {
+        val task = _tasks.value.firstOrNull { it.id == id } ?: return
+        if (task.state == TaskState.QUEUED || task.state == TaskState.DOWNLOADING) {
+            cancel(id)
+        }
         jobs.remove(id)
+        if (deleteFile) deleteTaskFiles(task)
         _tasks.update { list -> list.filterNot { it.id == id } }
         persist()
+        maybeStopService()
     }
 
-    fun clearFinished() {
+    /** 清除已结束的任务；deleteFiles 为 true 时连带删除它们留下的文件。 */
+    fun clearFinished(deleteFiles: Boolean = false) {
+        val finished = _tasks.value.filter {
+            it.state == TaskState.DONE || it.state == TaskState.ERROR || it.state == TaskState.CANCELED
+        }
+        if (deleteFiles) finished.forEach(::deleteTaskFiles)
         _tasks.update { list ->
             list.filter { it.state == TaskState.QUEUED || it.state == TaskState.DOWNLOADING }
         }
         persist()
+    }
+
+    /** 重命名已完成任务的文件（同时更新任务标题）。 */
+    fun rename(id: String, newTitle: String): Boolean {
+        val task = _tasks.value.firstOrNull { it.id == id } ?: return false
+        if (task.state != TaskState.DONE) return false
+        val file = task.filePath?.let(::File) ?: return false
+        if (!file.exists()) return false
+        val base = FileNames.clean(newTitle).ifBlank { return false }
+        val dir = file.parentFile ?: return false
+        val target = FileNames.uniqueFile(dir, base, file.extension, file)
+        val moved = target == file || runCatching { file.renameTo(target) }.getOrDefault(false)
+        if (!moved) return false
+        _tasks.update { list ->
+            list.map {
+                if (it.id == id) it.copy(title = base, filePath = target.absolutePath) else it
+            }
+        }
+        persist()
+        return true
+    }
+
+    /** 任务在磁盘上可能存在的文件：成品、.part 续传文件、.ytdl 元数据。 */
+    fun filesOf(task: DownloadTask): List<File> {
+        val path = task.filePath ?: return emptyList()
+        val dir = runCatching { YtDlpEngine.outputDir(appContext).canonicalFile }.getOrNull()
+            ?: return emptyList()
+        val candidates = linkedSetOf(
+            File(path),
+            File("$path.part"),
+            File(path.removeSuffix(".part") + ".ytdl")
+        )
+        return candidates.filter { file ->
+            file.exists() &&
+                runCatching { file.canonicalFile.parentFile == dir }.getOrDefault(false)
+        }
+    }
+
+    private fun deleteTaskFiles(task: DownloadTask) {
+        filesOf(task).forEach { runCatching { it.delete() } }
     }
 
     private fun update(id: String, transform: (DownloadTask) -> DownloadTask) {
