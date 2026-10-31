@@ -2,7 +2,7 @@
 
 一个基于 yt-dlp 的 Android 视频下载器，参考 Seal 与 SuperX 的逆向分析结果实现。
 
-介绍页：https://vidgrab-574.pages.dev/
+介绍页：https://soft-hall-6e48.gjvgfffgh3.workers.dev/
 
 ## 功能
 
@@ -20,7 +20,7 @@
 
 ## 落地页与视觉规范
 
-- 线上页面：https://vidgrab-574.pages.dev/
+- 线上页面：https://soft-hall-6e48.gjvgfffgh3.workers.dev/
 - 落地页源码：`site/index.html`（单文件，无外部依赖，可部署到任意静态托管）
 - 视觉规范：`docs/design/vidgrab-visual-spec.md`（色彩、字体、间距、组件、Compose 映射）
 
