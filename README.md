@@ -28,17 +28,15 @@
 
 ## 构建
 
-本仓库依赖本机工具链（默认放在 `..\.tools`）：
+构建需要 JDK 21、Android SDK（platform 35 / build-tools 35.0.0）与 Gradle 8.9。工具链默认从仓库同级的 `.tools/` 读取（即 `../.tools`），也可用 `ANDROID_HOME`、`GRADLE_USER_HOME`、`VIDGRAB_TOOLS` 环境变量指定：
 
 ```bash
-# JDK 21、Android SDK (platform 35 / build-tools 35.0.0)、Gradle 8.9
-cd VidGrab
 ./build.sh assembleDebug
 ```
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
-依赖通过阿里云 Maven 镜像下载，Gradle 用户目录指向 `..\.tools\gradle-home`，不会占用 C 盘。
+依赖通过阿里云 Maven 镜像下载，Gradle 用户目录（构建缓存）默认放在仓库同级的 `.tools/gradle-home`，可用 `GRADLE_USER_HOME` 覆盖。
 
 ## 架构
 

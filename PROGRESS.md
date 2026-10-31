@@ -3,19 +3,21 @@
 更新：2026-10-29
 
 ## 目标
-逆向 `..` 下的 Seal 与 SuperX，做一个自己的 Android 下载 App。
+逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
 已确定：Android 原生（Kotlin + Compose），首版功能 = yt-dlp 站点解析下载 + 内置浏览器嗅探。
 
 ## 环境
-| 组件 | 路径 |
+| 组件 | 位置 |
 |---|---|
-| JDK 21 | `$JAVA_HOME` |
-| Android SDK（platform 35 / build-tools 35.0.0） | `..\.tools\android-sdk` |
-| Gradle 8.9 | `..\.tools\gradle-8.9` |
-| Gradle 用户目录（构建缓存） | `..\.tools\gradle-home` |
-| youtubedl-android 0.18.1 源码 | `..\.tools\src\youtubedl-android-0.18.1` |
-| 反编译结果 | `..\.tools\re-out\seal`、`..\.tools\re-out\superx` |
-| 工程 | `..\VidGrab`（包名 `com.vidgrab.app`） |
+| JDK 21 | 本机已安装，`JAVA_HOME` 指向 |
+| Android SDK（platform 35 / build-tools 35.0.0） | `.tools/android-sdk` |
+| Gradle 8.9 | `.tools/gradle-8.9` |
+| Gradle 用户目录（构建缓存） | `.tools/gradle-home` |
+| youtubedl-android 0.18.1 源码 | `.tools/src/youtubedl-android-0.18.1` |
+| 反编译结果 | `.tools/re-out/seal`、`.tools/re-out/superx` |
+| 工程 | 仓库根目录（包名 `com.vidgrab.app`） |
+
+`.tools/` 是仓库外的工具目录（与仓库同级），不随仓库分发；也可用 `VIDGRAB_TOOLS` 等环境变量改到别处。
 
 下载源优先国内：阿里云 Maven、腾讯 Gradle 镜像、清华 PyPI、ghfast.top 代理 GitHub。
 
