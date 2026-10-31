@@ -371,7 +371,8 @@ fun BrowserScreen(
                             },
                             onDownload = {
                                 showSheet = false
-                                onDownload(media.url, media.pageTitle)
+                                // 媒体请求常早于页面标题回调，嗅探时没拿到标题就用当前页标题
+                                onDownload(media.url, media.pageTitle ?: pageState.title)
                             }
                         )
                         HorizontalDivider()

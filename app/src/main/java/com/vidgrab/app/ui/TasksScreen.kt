@@ -318,7 +318,7 @@ private fun fileLine(task: DownloadTask): String? {
     val file = task.filePath?.let(::File) ?: return null
     if (!file.exists()) return null
     val size = formatSize(file.length())
-    return if (size.isBlank()) "VidGrab/${file.name}" else "VidGrab/${file.name} · $size"
+    return if (size.isBlank()) "VidGrab/${file.name}" else "$size · VidGrab/${file.name}"
 }
 
 private fun stateText(task: DownloadTask): String = when (task.state) {

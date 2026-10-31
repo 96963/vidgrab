@@ -55,8 +55,11 @@ object FileNames {
 
         val segment = url?.substringBefore('?')?.substringBefore('#')?.substringAfterLast('/')
         if (!segment.isNullOrBlank()) {
-            if (text == segment) return true
-            if (text == decode(segment)) return true
+            val stem = segment.substringBeforeLast('.')
+            // yt-dlp 的通用解析器常把文件名（sample.mp4 -> sample）当作标题
+            listOf(segment, stem).filter { it.isNotBlank() }.forEach { candidate ->
+                if (text == candidate || text == decode(candidate)) return true
+            }
         }
         if (text.any { it.code > 127 }) return false
         val ext = text.substringAfterLast('.', "").lowercase()
