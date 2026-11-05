@@ -1,6 +1,7 @@
 package com.vidgrab.app.core
 
 import android.content.Context
+import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLException
@@ -21,6 +22,8 @@ object YtDlpEngine {
     private val initLock = Mutex()
     @Volatile
     private var initialized = false
+    @Volatile
+    private var aria2cReady = false
 
     val isReady: Boolean get() = initialized
 
@@ -31,6 +34,11 @@ object YtDlpEngine {
                 if (!initialized) {
                     YoutubeDL.getInstance().init(context.applicationContext)
                     FFmpeg.getInstance().init(context.applicationContext)
+                    // aria2c 解压失败不影响内置下载器
+                    aria2cReady = runCatching {
+                        Aria2c.getInstance().init(context.applicationContext)
+                        true
+                    }.getOrDefault(false)
                     initialized = true
                 }
             }
@@ -88,6 +96,12 @@ object YtDlpEngine {
         )
     }
 
+    /** HLS/DASH 分片由 yt-dlp 自己调度，交给 aria2c 反而可能变慢或出错。 */
+    private fun canUseAria2c(url: String): Boolean {
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        return !path.endsWith(".m3u8") && !path.endsWith(".mpd")
+    }
+
     /** 浏览器嗅探到的直链，通常需要原页面的 Cookie/Referer/UA 才能访问。 */
     private fun YoutubeDLRequest.addDetectedHeaders(url: String): YoutubeDLRequest {
         MediaSniffer.headersFor(url).forEach { (name, value) ->
@@ -140,6 +154,8 @@ object YtDlpEngine {
     }
 
     private val speedRegex = Regex("""at\s+([0-9.]+\s*[KMG]?iB/s)""")
+    // aria2c 的汇总行： [#gid 1.2MiB/10MiB(12%) CN:5 DL:1.2MiB ETA:6s]
+    private val ariaSpeedRegex = Regex("""DL:([0-9.]+\s*[KMG]?iB)""")
     private val etaRegex = Regex("""ETA\s+([0-9:]+)""")
 
     /**
@@ -161,7 +177,27 @@ object YtDlpEngine {
         ensureReady(context)
         val dir = outputDir(context)
         val before = dir.listFiles()?.map { it.name }?.toHashSet() ?: HashSet()
+        val useAria2c = DownloadSettings.aria2c && aria2cReady && canUseAria2c(task.url)
+        val produced = try {
+            runDownload(task, dir, before, useAria2c, onProgress, onFile)
+        } catch (e: YoutubeDL.CanceledException) {
+            throw e
+        } catch (e: Throwable) {
+            // aria2c 不可用或站点不接受时，退回内置下载器重试一次
+            if (!useAria2c) throw e
+            runDownload(task, dir, before, false, onProgress, onFile)
+        }
+        return renameToTitle(produced, task.title, task.url)
+    }
 
+    private fun runDownload(
+        task: DownloadTask,
+        dir: File,
+        before: Set<String>,
+        useAria2c: Boolean,
+        onProgress: (Float, String, String) -> Unit,
+        onFile: (String) -> Unit
+    ): File? {
         val request = YoutubeDLRequest(task.url)
             .addOption("--newline")
             .addOption("--no-mtime")
@@ -169,12 +205,16 @@ object YtDlpEngine {
             .addOption("--no-warnings")
             .addOption("--socket-timeout", "15")
             .addOption("-P", dir.absolutePath)
-            .addOption("-o", "%(title).180B [%(id)s].%(ext)s")
+            // title 和 id 都要限长：部分站点的 id 是长哈希，不截断会触发 ENAMETOOLONG
+            .addOption("-o", "%(title).80B [%(id).24B].%(ext)s")
             .addOption("-f", task.selector)
             .addOption("--continue")
             .addOption("--retries", 10)
             .addOption("--fragment-retries", 10)
-            .addOption("--concurrent-fragments", 4)
+            .addOption("--concurrent-fragments", DownloadSettings.fragments)
+        if (useAria2c) {
+            request.addOption("--downloader", "libaria2c.so")
+        }
         request.addDetectedHeaders(task.url)
 
         if (task.audioOnly) {
@@ -190,7 +230,10 @@ object YtDlpEngine {
             if (!line.isNullOrBlank()) {
                 destinationOf(line)?.let(onFile)
             }
-            val speed = line?.let { speedRegex.find(it)?.groupValues?.get(1) } ?: ""
+            val speed = line?.let {
+                speedRegex.find(it)?.groupValues?.get(1)
+                    ?: ariaSpeedRegex.find(it)?.groupValues?.get(1)?.let { s -> "$s/s" }
+            } ?: ""
             val etaText = when {
                 eta > 0 -> formatDuration(eta)
                 line != null -> etaRegex.find(line)?.groupValues?.get(1) ?: ""
@@ -199,7 +242,7 @@ object YtDlpEngine {
             onProgress((progress / 100f).coerceIn(0f, 1f), speed, etaText)
         }
 
-        val produced = dir.listFiles()
+        return dir.listFiles()
             ?.filter {
                 it.isFile &&
                     !it.name.endsWith(".part") &&
@@ -210,7 +253,6 @@ object YtDlpEngine {
             ?: dir.listFiles()
                 ?.filter { it.isFile && !it.name.endsWith(".part") && !it.name.endsWith(".ytdl") }
                 ?.maxByOrNull { it.lastModified() }
-        return renameToTitle(produced, task.title)
     }
 
     /** yt-dlp 输出里出现的目标文件路径。 */
@@ -233,14 +275,24 @@ object YtDlpEngine {
     }
 
     /** 下载完成后按清洗过的标题重命名，避免把网页标题原样当文件名。 */
-    private fun renameToTitle(file: File?, title: String): File? {
+    private fun renameToTitle(file: File?, title: String, url: String?): File? {
         if (file == null) return null
-        val base = FileNames.clean(title)
+        val base = FileNames.safeTitle(title, url)
         if (base.isBlank()) return file
         val parent = file.parentFile ?: return file
         val target = FileNames.uniqueFile(parent, base, file.extension, file)
         if (target == file) return file
-        return if (runCatching { file.renameTo(target) }.getOrDefault(false)) target else file
+        return moveFile(file, target)
+    }
+
+    /** renameTo 在部分文件系统上会失败，退回复制 + 删除。 */
+    private fun moveFile(file: File, target: File): File {
+        if (runCatching { file.renameTo(target) }.getOrDefault(false)) return target
+        return runCatching {
+            file.copyTo(target, overwrite = false)
+            file.delete()
+            target
+        }.getOrDefault(file)
     }
 
     fun outputDir(context: Context): File {

@@ -49,10 +49,26 @@ object DownloadManager {
     /** 应用启动后调用：把上次中断的任务重新排入队列（yt-dlp/直链会尝试续传）。 */
     fun resumePending() {
         if (!::appContext.isInitialized) return
-        val queued = _tasks.value.filter { it.state == TaskState.QUEUED }
+        // PROCESSING 是「成品复制到公共目录」时被杀的状态，同样需要重新入队
+        val queued = _tasks.value.filter {
+            it.state == TaskState.QUEUED || it.state == TaskState.PROCESSING
+        }
         if (queued.isEmpty()) return
         DownloadService.start(appContext)
-        queued.forEach { schedule(it) }
+        queued.forEach { task ->
+            val ref = task.filePath
+            if (task.state == TaskState.PROCESSING &&
+                ref != null && PublicStorage.isContentRef(ref) && PublicStorage.exists(appContext, ref)
+            ) {
+                // 成品其实已经导出成功，只是没来得及写完成状态
+                update(task.id) { it.copy(state = TaskState.DONE, progress = 1f) }
+                return@forEach
+            }
+            if (task.state == TaskState.PROCESSING) {
+                update(task.id) { it.copy(state = TaskState.QUEUED) }
+            }
+            schedule(task)
+        }
     }
 
     fun enqueue(
@@ -122,9 +138,23 @@ object DownloadManager {
             )
             // 下载中可能改过名，落盘时以最新标题为准
             val current = _tasks.value.firstOrNull { it.id == task.id }
-            val file = renameFinished(produced, current?.title ?: task.title)
+            val file = renameFinished(produced, current?.title ?: task.title, task.url)
+            // 成品导出到公共下载目录；大文件复制期间保持「处理中」
+            val ref: String?
+            if (file != null && file.exists()) {
+                update(task.id) { it.copy(state = TaskState.PROCESSING) }
+                val published = PublicStorage.publish(appContext, file)
+                if (published != null && _tasks.value.none { it.id == task.id }) {
+                    // 复制期间任务被删除，公共目录里的成品也一并清掉
+                    PublicStorage.delete(appContext, published)
+                    return
+                }
+                ref = published ?: file.absolutePath
+            } else {
+                ref = file?.absolutePath
+            }
             update(task.id) {
-                it.copy(state = TaskState.DONE, progress = 1f, filePath = file?.absolutePath)
+                it.copy(state = TaskState.DONE, progress = 1f, filePath = ref)
             }
             Notifications.showDone(appContext, current?.title ?: task.title)
         } catch (e: YoutubeDL.CanceledException) {
@@ -204,7 +234,16 @@ object DownloadManager {
             persist()
             return true
         }
-        val file = task.filePath?.let(::File) ?: return false
+        val ref = task.filePath ?: return false
+        if (PublicStorage.isContentRef(ref)) {
+            if (!PublicStorage.rename(appContext, ref, base)) return false
+            _tasks.update { list ->
+                list.map { if (it.id == id) it.copy(title = base) else it }
+            }
+            persist()
+            return true
+        }
+        val file = File(ref)
         if (!file.exists()) return false
         val dir = file.parentFile ?: return false
         val target = FileNames.uniqueFile(dir, base, file.extension, file)
@@ -220,18 +259,33 @@ object DownloadManager {
     }
 
     /** 下载完成时按任务的最新标题落盘（下载中改过名也能生效）。 */
-    private fun renameFinished(file: File?, title: String): File? {
+    private fun renameFinished(file: File?, title: String, url: String?): File? {
         if (file == null || !file.exists()) return file
-        val base = FileNames.clean(title)
+        val base = FileNames.safeTitle(title, url)
         if (base.isBlank() || file.nameWithoutExtension == base) return file
         val dir = file.parentFile ?: return file
         val target = FileNames.uniqueFile(dir, base, file.extension, file)
-        return if (runCatching { file.renameTo(target) }.getOrDefault(false)) target else file
+        if (runCatching { file.renameTo(target) }.getOrDefault(false)) return target
+        // renameTo 失败时退回复制 + 删除
+        return runCatching {
+            file.copyTo(target, overwrite = false)
+            file.delete()
+            target
+        }.getOrDefault(file)
     }
 
-    /** 任务在磁盘上可能存在的文件：成品、.part 续传文件、.ytdl 元数据。 */
+    /** 任务是否还有可操作的文件：公共目录引用或私有目录里的成品/.part。 */
+    fun hasFile(task: DownloadTask): Boolean {
+        val ref = task.filePath ?: return false
+        if (!::appContext.isInitialized) return false
+        if (PublicStorage.isContentRef(ref)) return PublicStorage.exists(appContext, ref)
+        return filesOf(task).isNotEmpty()
+    }
+
+    /** 任务在私有目录里可能存在的文件：成品、.part 续传文件、.ytdl 元数据。 */
     fun filesOf(task: DownloadTask): List<File> {
         val path = task.filePath ?: return emptyList()
+        if (PublicStorage.isContentRef(path)) return emptyList()
         val dir = runCatching { YtDlpEngine.outputDir(appContext).canonicalFile }.getOrNull()
             ?: return emptyList()
         val candidates = linkedSetOf(
@@ -246,6 +300,13 @@ object DownloadManager {
     }
 
     private fun deleteTaskFiles(task: DownloadTask) {
+        val ref = task.filePath
+        if (ref != null && PublicStorage.isContentRef(ref)) {
+            PublicStorage.delete(appContext, ref)
+            return
+        }
+        // Android 9 及以下可能直接落在公共 Download/VidGrab
+        PublicStorage.deletePublicPath(ref)
         filesOf(task).forEach { runCatching { it.delete() } }
     }
 

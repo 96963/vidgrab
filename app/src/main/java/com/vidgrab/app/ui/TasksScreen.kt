@@ -1,6 +1,7 @@
 package com.vidgrab.app.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -48,6 +49,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadTask
+import com.vidgrab.app.core.PublicStorage
 import com.vidgrab.app.core.TaskState
 import java.io.File
 
@@ -126,7 +128,7 @@ fun TasksScreen() {
                     },
                     onCancel = { DownloadManager.cancel(task.id) },
                     onRemove = {
-                        deleteFile = DownloadManager.filesOf(task).isNotEmpty()
+                        deleteFile = DownloadManager.hasFile(task)
                         deleteTarget = task
                     },
                     onRetry = { DownloadManager.retry(task.id) },
@@ -140,7 +142,7 @@ fun TasksScreen() {
     }
 
     deleteTarget?.let { task ->
-        val hasFiles = DownloadManager.filesOf(task).isNotEmpty()
+        val hasFiles = DownloadManager.hasFile(task)
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除任务") },
@@ -179,7 +181,7 @@ fun TasksScreen() {
 
     if (showClearDialog) {
         val finished = tasks.filter { it.isFinished }
-        val withFiles = finished.count { DownloadManager.filesOf(it).isNotEmpty() }
+        val withFiles = finished.count { DownloadManager.hasFile(it) }
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
             title = { Text("清除已完成") },
@@ -213,7 +215,7 @@ fun TasksScreen() {
 
     if (showBatchDialog) {
         val chosen = tasks.filter { it.id in selected }
-        val withFiles = chosen.count { DownloadManager.filesOf(it).isNotEmpty() }
+        val withFiles = chosen.count { DownloadManager.hasFile(it) }
         AlertDialog(
             onDismissRequest = { showBatchDialog = false },
             title = { Text("删除 ${chosen.size} 个任务") },
@@ -303,6 +305,7 @@ private fun TaskCard(
     onRename: () -> Unit,
     onOpen: () -> Unit
 ) {
+    val context = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,7 +337,8 @@ private fun TaskCard(
                         }
                     )
                     if (task.state == TaskState.DONE) {
-                        fileLine(task)?.let {
+                        // 内容 Uri 查询较重，只在引用/标题变化时重新查询
+                        remember(task.filePath, task.title) { fileLine(context, task) }?.let {
                             Text(
                                 it,
                                 style = MaterialTheme.typography.bodySmall,
@@ -401,12 +405,17 @@ private fun TaskCard(
 private val DownloadTask.isFinished: Boolean
     get() = state == TaskState.DONE || state == TaskState.ERROR || state == TaskState.CANCELED
 
-/** 已完成任务显示相对路径与文件大小。 */
-private fun fileLine(task: DownloadTask): String? {
-    val file = task.filePath?.let(::File) ?: return null
-    if (!file.exists()) return null
-    val size = formatSize(file.length())
-    return if (size.isBlank()) "VidGrab/${file.name}" else "$size · VidGrab/${file.name}"
+/** 已完成任务显示保存位置与文件大小。 */
+private fun fileLine(context: android.content.Context, task: DownloadTask): String? {
+    val ref = task.filePath ?: return null
+    val info = PublicStorage.info(context, ref) ?: return null
+    val size = formatSize(info.size)
+    val location = if (PublicStorage.isContentRef(ref)) {
+        "Download/VidGrab/${info.name}"
+    } else {
+        "VidGrab/${info.name}"
+    }
+    return if (size.isBlank()) location else "$size · $location"
 }
 
 private fun stateText(task: DownloadTask): String = when (task.state) {
@@ -419,15 +428,22 @@ private fun stateText(task: DownloadTask): String = when (task.state) {
 }
 
 private fun openFile(context: android.content.Context, path: String) {
-    val file = File(path)
-    if (!file.exists()) return
-    val ext = file.extension.lowercase()
-    val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
-    val uri = FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        file
-    )
+    val uri: Uri
+    val mime: String
+    if (PublicStorage.isContentRef(path)) {
+        uri = Uri.parse(path)
+        mime = context.contentResolver.getType(uri) ?: "*/*"
+    } else {
+        val file = File(path)
+        if (!file.exists()) return
+        val ext = file.extension.lowercase()
+        mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+        uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+    }
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, mime)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

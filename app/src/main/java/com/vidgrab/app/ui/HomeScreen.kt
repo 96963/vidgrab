@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,11 +37,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.vidgrab.app.core.DownloadManager
+import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.FormatOption
 import com.vidgrab.app.core.MediaInfo
@@ -86,6 +91,10 @@ fun HomeScreen(
     var updating by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var updateProgress by remember { mutableFloatStateOf(-1f) }
+    var fragments by remember { mutableIntStateOf(DownloadSettings.fragments) }
+    var aria2c by remember { mutableStateOf(DownloadSettings.aria2c) }
+    // 点「开始下载」后先弹窗确认/修改文件名，再入队
+    var pendingDownload by remember { mutableStateOf<Pair<MediaInfo, FormatOption>?>(null) }
 
     LaunchedEffect(showSettings) {
         if (showSettings) {
@@ -194,16 +203,53 @@ fun HomeScreen(
         info?.let { media ->
             Spacer(Modifier.height(16.dp))
             MediaInfoCard(media) { format ->
-                DownloadManager.enqueue(
-                    url = media.webpageUrl,
-                    title = media.title,
-                    thumbnail = media.thumbnail,
-                    selector = format.id,
-                    audioOnly = format.audioOnly
-                )
-                onTaskStarted()
+                pendingDownload = media to format
             }
         }
+    }
+
+    pendingDownload?.let { (media, format) ->
+        var name by remember(media, format) { mutableStateOf(media.title) }
+        AlertDialog(
+            onDismissRequest = { pendingDownload = null },
+            title = { Text("下载文件名") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "格式：${format.label}，扩展名自动决定",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = name.isNotBlank(),
+                    onClick = {
+                        DownloadManager.enqueue(
+                            url = media.webpageUrl,
+                            title = FileNames.clean(name).ifBlank { media.title },
+                            thumbnail = media.thumbnail,
+                            selector = format.id,
+                            audioOnly = format.audioOnly
+                        )
+                        pendingDownload = null
+                        onTaskStarted()
+                    }
+                ) { Text("开始下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDownload = null }) { Text("取消") }
+            }
+        )
     }
 
     if (showSettings) {
@@ -264,6 +310,64 @@ fun HomeScreen(
                         .height(48.dp)
                 ) {
                     Text(if (updating) "更新中…" else "检查并更新 yt-dlp")
+                }
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+                Text("下载设置", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "分片并发（HLS/DASH），新任务生效",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DownloadSettings.FRAGMENT_OPTIONS.forEach { option ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    fragments = option
+                                    DownloadSettings.fragments = option
+                                }
+                                .padding(horizontal = 4.dp)
+                        ) {
+                            RadioButton(
+                                selected = fragments == option,
+                                onClick = {
+                                    fragments = option
+                                    DownloadSettings.fragments = option
+                                }
+                            )
+                            Text("$option", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            aria2c = !aria2c
+                            DownloadSettings.aria2c = aria2c
+                        }
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("多线程下载（aria2c）", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "对普通 MP4 等单文件更有效；HLS/DASH 仍由内置下载器处理",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = aria2c,
+                        onCheckedChange = {
+                            aria2c = it
+                            DownloadSettings.aria2c = it
+                        }
+                    )
                 }
                 Spacer(Modifier.height(24.dp))
             }

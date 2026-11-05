@@ -70,4 +70,4 @@ python tools/gen_adrules.py <规则目录> app/src/main/assets/ad_rules.txt
 
 ## 许可证
 
-工程内含 GPL-3.0 的 youtubedl-android 代码与 FFmpeg 相关组件，因此本应用整体需按 **GPL-3.0** 分发。若需闭源，应改为自研 Python 进程封装并替换相应组件。
+工程内含 GPL-3.0 的 youtubedl-android 代码与 FFmpeg、aria2c 相关组件，因此本应用整体需按 **GPL-3.0** 分发，完整许可证文本见 [LICENSE](LICENSE)。若需闭源，应改为自研 Python 进程封装并替换相应组件。
