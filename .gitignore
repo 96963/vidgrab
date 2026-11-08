@@ -21,3 +21,9 @@ dist/
 # 临时文件
 *.log
 .tmp
+device_test_results.json
+
+# 本机签名配置（仅提交模板）
+keystore.properties
+*.keystore
+*.jks

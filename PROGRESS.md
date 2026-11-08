@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-05（当前版本 1.1.0 / versionCode 3）
+更新：2026-11-08（当前版本 1.1.0 / versionCode 3）
 
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
@@ -42,6 +42,27 @@
 - [x] 拦截增强：引入 EasyList / EasyPrivacy / EasyList China，生成约 9.6 万条域名规则 + 5800 条第三方规则 + 573 条例外；匹配改为域名后缀逐级查表，支持第三方判定
 - [x] 新增边下边播：Media3 ExoPlayer（HLS/DASH/MP4），嗅探列表每项加「播放」，真机验证 MP4 与 m3u8 均可播放；请求头复用嗅探结果
 - [x] 图标修复：改用 Adaptive Icon（背景/前景/monochrome）+ 五档 PNG + roundIcon，通知栏改用单色 `ic_stat_download`，桌面显示正常
+
+
+## 第 4 批「切页签不丢状态 + 公共目录全流程」真机验证（2026-11-08，vivo V2156A / Android 11 / arm64-v8a）
+
+本次用 adb + 截图驱动真机做端到端验证，结论如下：
+
+完成后并验证：
+- [x] 安装与启动：`app-debug.apk` 安装成功，native 库齐全（libpython/libffmpeg/libaria2c/libqjs 等）
+- [x] 浏览器嗅探：w3schools `html5_video.asp` 识别出 VIDEO(mp4) + AUDIO(ogg) 两项，FAB 显示「检测到 2 个媒体」
+- [x] 嗅探→解析→下载：`mov_bbb.mp4` 解析成功，下载 770KB，落盘 `/sdcard/Download/VidGrab/`（`w3schools.com 20261108-1130.mp4`）
+- [x] 公共目录重命名：任务卡片改名后，文件系统同步变为 `vidgrab-rename-test.mp4`，大小不变
+- [x] 公共目录打开：通过 `content://` URI 交给系统播放器正常播放
+- [x] 公共目录删除（含文件）：确认删除后 `Download/VidGrab` 目录清空
+- [x] 浏览器→下载联动：嗅探面板「解析」跳回下载页并预填 URL 自动解析
+- [x] 无崩溃/异常：logcat 中无 `AndroidRuntime`/FATAL（`vivocameraserver`/`AuthPII` 为系统无关记录）
+
+**关键缺陷与修复：切换页签后浏览器页面重载、滚动与视频进度丢失**
+- 现象：在视频页播放后切到「任务」再切回，页面回到顶部、进度归零。
+- 根因：`MainActivity` 用 `when(tab)` 渲染，切页签时 `BrowserScreen` 离开组合，`AndroidView` 被销毁；而 `BrowserScreen` 的 `factory` 每次都 `WebView(ctx)` 新建，并未复用 `BrowserViewModel.webView`，导致重新 `loadUrl` 丢失状态。
+- 修复：`MainActivity` 改为三个页面**始终常驻组合**，仅把非活动页用 `graphicsLayer{ translationX = ±100000f }` 移出屏幕并用 `zIndex` 控制命中顺序；`BrowserScreen` 增加 `isActive` 参数，`BackHandler` 仅在浏览器页激活时生效，避免其它页签误拦截返回键。
+- 复验：同一视频页播放后切「任务」再切回，滚动位置保留、视频继续播放至 `0:10/0:10`、嗅探结果仍在——状态保留通过。
 
 
 ## 第 1 批「抓得到、不被墙」进度（2026-10-29）
@@ -189,7 +210,7 @@
      - 任务卡片显示 `Download/VidGrab/文件名 · 大小`
    - 恢复：复制期间被杀会停在「处理中」，启动时重新入队；若引用已存在则直接标记完成
    - 真机验证：新包已安装；下载后公共目录 `Download/VidGrab` 已生成，导出链路正常
-   - 未单独验证：公共目录里文件的重命名、打开、删除
+   - 2026-11-08 补验：公共目录文件的重命名、打开、删除均已通过（见第 4 批）
 
 11. **下载之前修改文件名（2026-11-05 已实现）**
    - 点「开始下载 · 格式」后先弹出「下载文件名」对话框，预填解析到的标题，可修改后确认入队
@@ -204,7 +225,8 @@
 ## 待办
 - [ ] 可选：更多 ABI（x86_64 模拟器）、代理设置、播放页专用解析规则
 - [ ] 可选：yt-dlp 更新改为带版本预检（需找到手机可访问的版本接口）
-- [ ] 已知限制：切换页签会重新加载当前页面（不保留播放进度）；仅 arm64；debug 签名
+- [x] 切换页签保留页面/滚动/视频进度（2026-11-08 已修复并真机验证）
+- [ ] 配置 release 签名并分发（当前仍为 debug 签名；abiFilters 已含 arm64-v8a + x86_64）
 - [x] 许可证：已补 GPL-3.0 全文 `LICENSE`，README 增加指向
 
 ## 逆向结论摘要

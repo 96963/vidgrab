@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+import java.io.File
+import java.io.FileInputStream
+import java.util.Properties
+
 android {
     namespace = "com.vidgrab.app"
     compileSdk = 35
@@ -12,17 +16,44 @@ android {
         applicationId = "com.vidgrab.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    // 签名配置：从 keystore.properties 读取（不提交到版本控制）
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    val keystoreProperties = Properties()
+    val hasKeystore = keystorePropertiesFile.exists()
+    if (hasKeystore) {
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+    }
+
+    val ksStoreFile = keystoreProperties.getProperty("storeFile") ?: ""
+    val ksStorePassword = keystoreProperties.getProperty("storePassword") ?: ""
+    val ksKeyAlias = keystoreProperties.getProperty("keyAlias") ?: ""
+    val ksKeyPassword = keystoreProperties.getProperty("keyPassword") ?: ""
+
+    if (hasKeystore && ksStoreFile.isNotBlank() && ksStorePassword.isNotBlank() && ksKeyAlias.isNotBlank() && ksKeyPassword.isNotBlank()) {
+        signingConfigs {
+            create("release") {
+                storeFile = File(ksStoreFile)
+                storePassword = ksStorePassword
+                keyAlias = ksKeyAlias
+                keyPassword = ksKeyPassword
+            }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (hasKeystore && ksStoreFile.isNotBlank() && ksStorePassword.isNotBlank() && ksKeyAlias.isNotBlank() && ksKeyPassword.isNotBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -75,6 +106,7 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-annotations:2.17.2")
     implementation("commons-io:commons-io:2.16.1")
     implementation("org.apache.commons:commons-compress:1.26.2")
+    implementation("org.tukaani:xz:1.9")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -17,7 +17,6 @@
 - **持久化与续传**：任务列表落盘（应用被杀后可恢复），未完成任务重启后自动续传；失败/取消可一键重试；HLS 分片 4 路并发、自动重试 10 次
 - **外部分享**：从其他 App 分享文本/链接可直接进入解析
 
-
 ## 落地页与视觉规范
 
 - 线上页面：https://soft-hall-6e48.gjvgfffgh3.workers.dev/
@@ -70,4 +69,4 @@ python tools/gen_adrules.py <规则目录> app/src/main/assets/ad_rules.txt
 
 ## 许可证
 
-工程内含 GPL-3.0 的 youtubedl-android 代码与 FFmpeg、aria2c 相关组件，因此本应用整体需按 **GPL-3.0** 分发，完整许可证文本见 [LICENSE](LICENSE)。若需闭源，应改为自研 Python 进程封装并替换相应组件。
+工程内含 GPL-3.0 的 youtubedl-android 代码与 FFmpeg、aria2c 相关组件，因此本应用整体需按 **GPL-3.0** 分发，完整许可证文本见 [LICENSE](LICENSE)。

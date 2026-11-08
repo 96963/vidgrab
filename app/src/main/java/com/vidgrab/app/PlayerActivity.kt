@@ -2,6 +2,7 @@ package com.vidgrab.app
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -25,6 +26,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.vidgrab.app.core.MediaSniffer
+import com.vidgrab.app.ui.syncStatusBarOnly
 
 /**
  * 边缓冲边播放：直接把检测到的 m3u8 / mpd / mp4 交给 ExoPlayer，
@@ -45,8 +47,10 @@ class PlayerActivity : ComponentActivity() {
         val title = intent.getStringExtra(EXTRA_TITLE)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.statusBarColor = Color.BLACK
-        window.navigationBarColor = Color.BLACK
+        // 同步状态栏颜色（沉浸式模式）
+        val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        syncStatusBarOnly(this, dark)
 
         val headers = readHeaders()
         val httpFactory = DefaultHttpDataSource.Factory()

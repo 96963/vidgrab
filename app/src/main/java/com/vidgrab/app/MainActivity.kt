@@ -2,15 +2,15 @@ package com.vidgrab.app
 
 import android.Manifest
 import android.content.Intent
-import android.content.res.Configuration
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
@@ -26,39 +26,50 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsControllerCompat
+import androidx.activity.viewModels
+import com.vidgrab.app.core.BrowserViewModel
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.ui.BrowserScreen
 import com.vidgrab.app.ui.HOME_URL
 import com.vidgrab.app.ui.HomeScreen
 import com.vidgrab.app.ui.TasksScreen
 import com.vidgrab.app.ui.VidGrabTheme
+import com.vidgrab.app.ui.syncSystemBars
 
 class MainActivity : ComponentActivity() {
 
     private val pendingUrl = mutableStateOf<String?>(null)
     private val pendingTitle = mutableStateOf<String?>(null)
-    private val browserUrl = mutableStateOf(HOME_URL)
     private val selectedTab = mutableIntStateOf(0)
+    private val browserViewModel: BrowserViewModel by viewModels()
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private val storagePermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (!granted) {
+                // 用户拒绝存储权限，公共目录写入将失败，后续会回退到私有目录
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        applySystemBars()
         handleIntent(intent)
         requestNotificationPermission()
+        requestStoragePermission()
         // 恢复上次未完成的下载
         DownloadManager.resumePending()
 
         setContent {
             VidGrabTheme {
+                // 同步状态栏/导航栏颜色
+                syncSystemBars(this@MainActivity, isSystemInDarkTheme())
                 var tab by selectedTab
                 val pending = pendingUrl.value
-                val currentBrowserUrl = browserUrl.value
 
                 Scaffold(
                     bottomBar = {
@@ -85,8 +96,17 @@ class MainActivity : ComponentActivity() {
                     }
                 ) { padding ->
                     Box(modifier = Modifier.padding(padding)) {
-                        when (tab) {
-                            0 -> HomeScreen(
+                        // 三个页面始终常驻组合，仅把非活动页面移出屏幕。
+                        // 这样切页签时 WebView 不会被销毁，页面/滚动/视频播放进度得以保留。
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (tab == 0) 1f else 0f)
+                                .graphicsLayer {
+                                    translationX = if (tab == 0) 0f else 100000f
+                                }
+                        ) {
+                            HomeScreen(
                                 initialUrl = pending,
                                 initialTitle = pendingTitle.value,
                                 onConsumed = {
@@ -95,33 +115,39 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onTaskStarted = { tab = 2 }
                             )
-                            1 -> BrowserScreen(
-                                initialUrl = currentBrowserUrl,
-                                onUrlChange = { browserUrl.value = it },
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (tab == 1) 1f else 0f)
+                                .graphicsLayer {
+                                    translationX = if (tab == 1) 0f else 100000f
+                                }
+                        ) {
+                            BrowserScreen(
+                                viewModel = browserViewModel,
+                                isActive = tab == 1,
+                                onUrlChange = { browserViewModel.updateUrl(it) },
                                 onDownload = { url, title ->
                                     pendingUrl.value = url
                                     pendingTitle.value = title
                                     tab = 0
                                 }
                             )
-                            else -> TasksScreen()
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (tab == 2) 1f else 0f)
+                                .graphicsLayer {
+                                    translationX = if (tab == 2) 0f else 100000f
+                                }
+                        ) {
+                            TasksScreen()
                         }
                     }
                 }
             }
-        }
-    }
-
-    private fun applySystemBars() {
-        val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        val background = Color.parseColor(if (dark) "#101820" else "#EEF2F4")
-        window.statusBarColor = background
-        window.navigationBarColor = background
-        WindowCompat.setDecorFitsSystemWindows(window, true)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            isAppearanceLightStatusBars = !dark
-            isAppearanceLightNavigationBars = !dark
         }
     }
 
@@ -134,7 +160,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
         intent.getStringExtra(EXTRA_BROWSER_URL)?.let { url ->
-            browserUrl.value = url
+            browserViewModel.loadUrl(url)
             selectedTab.intValue = 1
             return
         }
@@ -156,6 +182,19 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    private fun requestStoragePermission() {
+        // Android 9 (API 28) 及以下需要运行时申请 WRITE_EXTERNAL_STORAGE
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
     }

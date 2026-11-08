@@ -70,15 +70,19 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.compose.ui.graphics.Color
 import com.vidgrab.app.PlayerActivity
 import com.vidgrab.app.core.AdBlocker
 import com.vidgrab.app.core.BrowserStore
+import com.vidgrab.app.core.BrowserViewModel
 import com.vidgrab.app.core.DetectedMedia
 import com.vidgrab.app.core.DetectionLogEntry
 import com.vidgrab.app.core.MediaSniffer
 import com.vidgrab.app.core.SiteSettings
+import com.vidgrab.app.ui.SniffChips
 import kotlinx.coroutines.delay
 import java.net.URI
 
@@ -101,24 +105,28 @@ private enum class BrowserSheet { NONE, MENU, LIBRARY, LOGS }
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun BrowserScreen(
-    initialUrl: String,
+    viewModel: BrowserViewModel = viewModel(),
+    isActive: Boolean = true,
     onUrlChange: (String) -> Unit,
     onDownload: (String, String?) -> Unit
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    var address by remember { mutableStateOf(initialUrl) }
-    var addressField by remember { mutableStateOf(TextFieldValue(initialUrl)) }
+
+    // 从 ViewModel 读取状态
+    var address by remember { mutableStateOf(viewModel.currentUrl) }
+    var addressField by remember { mutableStateOf(TextFieldValue(viewModel.currentUrl)) }
     var addressFocused by remember { mutableStateOf(false) }
-    var webView by remember { mutableStateOf<WebView?>(null) }
     var showSheet by remember { mutableStateOf(false) }
     var sheet by remember { mutableStateOf(BrowserSheet.NONE) }
     var libraryTab by remember { mutableIntStateOf(0) }
     var showSiteDialog by remember { mutableStateOf(false) }
-    var canGoBack by remember { mutableStateOf(false) }
-    var adBlockEnabled by rememberSaveable { mutableStateOf(true) }
+    var canGoBack by remember { mutableStateOf(viewModel.canGoBack) }
+    var adBlockEnabled by rememberSaveable { mutableStateOf(viewModel.adBlockEnabled) }
     var settingsVersion by remember { mutableIntStateOf(0) }
-    val pageState = remember { PageState().also { it.url = initialUrl } }
+
+    val pageState = remember { PageState().also { it.url = viewModel.currentUrl } }
+
     val detected by MediaSniffer.items.collectAsStateWithLifecycle()
     val logs by MediaSniffer.logs.collectAsStateWithLifecycle()
     val history by BrowserStore.history.collectAsStateWithLifecycle()
@@ -139,14 +147,17 @@ fun BrowserScreen(
         }
     }
 
+    // 同步 ViewModel 的 adBlock 状态
     SideEffect { pageState.adBlock = adBlockEnabled }
 
-    BackHandler(enabled = canGoBack) {
-        webView?.goBack()
-        canGoBack = webView?.canGoBack() == true
+    // 系统返回键处理（仅在浏览器页为当前页时生效，避免在其他页签误拦截返回键）
+    BackHandler(enabled = canGoBack && isActive) {
+        viewModel.goBack()
+        canGoBack = viewModel.canGoBack
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // 工具栏
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -155,8 +166,8 @@ fun BrowserScreen(
         ) {
             IconButton(
                 onClick = {
-                    webView?.goBack()
-                    canGoBack = webView?.canGoBack() == true
+                    viewModel.goBack()
+                    canGoBack = viewModel.canGoBack
                 },
                 enabled = canGoBack
             ) {
@@ -188,11 +199,11 @@ fun BrowserScreen(
                     imeAction = ImeAction.Go
                 ),
                 keyboardActions = KeyboardActions(onGo = {
-                    webView?.loadUrl(normalizeUrl(addressField.text))
+                    viewModel.loadUrl(normalizeUrl(addressField.text))
                     focusManager.clearFocus()
                 })
             )
-            IconButton(onClick = { webView?.reload() }) {
+            IconButton(onClick = { viewModel.reload() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新")
             }
             IconButton(onClick = { sheet = BrowserSheet.MENU }) {
@@ -200,10 +211,12 @@ fun BrowserScreen(
             }
         }
 
+        // WebView - 使用 AndroidView 复用 ViewModel 中的 WebView 实例
         AndroidView(
             modifier = Modifier.weight(1f),
             factory = { ctx ->
-                WebView(ctx).apply {
+                // 首次创建 WebView 并交给 ViewModel 持有
+                val wv = WebView(ctx).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.databaseEnabled = true
@@ -259,6 +272,9 @@ fun BrowserScreen(
                             pageState.url = url
                             pageState.title = view.title
                             canGoBack = view.canGoBack()
+                            viewModel.updateUrl(url)
+                            viewModel.updateTitle(view.title)
+                            viewModel.updateCanGoBack(view.canGoBack())
                         }
 
                         override fun shouldInterceptRequest(
@@ -312,6 +328,9 @@ fun BrowserScreen(
                             if (!addressFocused) addressField = TextFieldValue(url)
                             onUrlChange(url)
                             canGoBack = view.canGoBack()
+                            viewModel.updateUrl(url)
+                            viewModel.updateTitle(view.title)
+                            viewModel.updateCanGoBack(view.canGoBack())
                         }
 
                         override fun doUpdateVisitedHistory(
@@ -327,15 +346,20 @@ fun BrowserScreen(
                             if (!addressFocused) addressField = TextFieldValue(url)
                             onUrlChange(url)
                             canGoBack = view.canGoBack()
+                            viewModel.updateUrl(url)
+                            viewModel.updateTitle(view.title)
+                            viewModel.updateCanGoBack(view.canGoBack())
                         }
                     }
-                    loadUrl(initialUrl)
-                    webView = this
+                    loadUrl(viewModel.currentUrl)
+                    viewModel.initializeWebView(this)
                 }
+                wv
             },
-            update = { webView = it }
+            update = { /* WebView 由 ViewModel 持有，不需要更新 */ }
         )
 
+        // 嗅探结果 FAB
         if (detected.isNotEmpty()) {
             ExtendedFloatingActionButton(
                 onClick = { showSheet = true },
@@ -346,6 +370,7 @@ fun BrowserScreen(
         }
     }
 
+    // 底部弹窗：检测结果
     if (showSheet) {
         ModalBottomSheet(
             onDismissRequest = { showSheet = false },
@@ -382,7 +407,6 @@ fun BrowserScreen(
                             },
                             onDownload = {
                                 showSheet = false
-                                // 媒体请求常早于页面标题回调，嗅探时没拿到标题就用当前页标题
                                 onDownload(media.url, media.pageTitle ?: pageState.title)
                             }
                         )
@@ -394,6 +418,7 @@ fun BrowserScreen(
         }
     }
 
+    // 底部弹窗：检测日志
     if (sheet == BrowserSheet.LOGS) {
         ModalBottomSheet(
             onDismissRequest = { sheet = BrowserSheet.NONE },
@@ -424,6 +449,7 @@ fun BrowserScreen(
         }
     }
 
+    // 底部弹窗：菜单
     if (sheet == BrowserSheet.MENU) {
         ModalBottomSheet(
             onDismissRequest = { sheet = BrowserSheet.NONE },
@@ -456,6 +482,7 @@ fun BrowserScreen(
                     }
                 ) {
                     adBlockEnabled = !adBlockEnabled
+                    viewModel.setAdBlockEnabled(adBlockEnabled)
                     sheet = BrowserSheet.NONE
                 }
                 MenuItem("本站广告拦截设置", "当前站点") {
@@ -472,6 +499,7 @@ fun BrowserScreen(
         }
     }
 
+    // 底部弹窗：历史/书签
     if (sheet == BrowserSheet.LIBRARY) {
         ModalBottomSheet(
             onDismissRequest = { sheet = BrowserSheet.NONE },
@@ -508,7 +536,7 @@ fun BrowserScreen(
                         LazyColumn(modifier = Modifier.fillMaxWidth().height(420.dp)) {
                             items(history) { entry ->
                                 LibraryRow(entry.title, entry.url, time = entry.visitedAt) {
-                                    webView?.loadUrl(entry.url)
+                                    viewModel.loadUrl(entry.url)
                                     sheet = BrowserSheet.NONE
                                 }
                                 HorizontalDivider()
@@ -527,7 +555,7 @@ fun BrowserScreen(
                                     time = entry.savedAt,
                                     onDelete = { BrowserStore.removeBookmark(entry.url) }
                                 ) {
-                                    webView?.loadUrl(entry.url)
+                                    viewModel.loadUrl(entry.url)
                                     sheet = BrowserSheet.NONE
                                 }
                                 HorizontalDivider()
@@ -540,6 +568,7 @@ fun BrowserScreen(
         }
     }
 
+    // 本站广告拦截设置对话框
     if (showSiteDialog) {
         val key = siteKey
         val disabled = siteDisabled
@@ -660,17 +689,11 @@ private fun DetectedRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            val chipBg = when (media.kind) {
-                "HLS" -> MaterialTheme.colorScheme.primaryContainer
-                "DASH" -> DashSoft
-                "VIDEO", "MP4" -> GreenSoft
-                else -> MaterialTheme.colorScheme.surfaceVariant
-            }
-            val chipFg = when (media.kind) {
-                "HLS" -> MaterialTheme.colorScheme.primary
-                "DASH" -> Dash
-                "VIDEO", "MP4" -> Green
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            val (chipBg, chipFg) = when (media.kind) {
+                "HLS" -> SniffChips.HlsBg to SniffChips.HlsFg
+                "DASH" -> SniffChips.DashBg to SniffChips.DashFg
+                "VIDEO", "MP4" -> SniffChips.VideoBg to SniffChips.VideoFg
+                else -> SniffChips.AudioBg to SniffChips.AudioFg
             }
             Text(
                 media.kind,
