@@ -5,10 +5,18 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.StatFs
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import java.io.File
+import java.util.Locale
+
+/** 发布到公共下载目录的结果：失败时把原因带回界面，不再静默回退。 */
+sealed interface PublishResult {
+    data class Success(val ref: String) : PublishResult
+    data class Failure(val message: String) : PublishResult
+}
 
 /**
  * 成品文件发布：下载仍在应用私有目录进行（便于续传），完成后复制到公共
@@ -25,21 +33,54 @@ object PublicStorage {
 
     fun isContentRef(ref: String?): Boolean = ref?.startsWith("content://") == true
 
-    /** 复制成品到公共目录，成功返回引用（content:// 或绝对路径），失败返回 null。 */
-    fun publish(context: Context, file: File): String? {
-        if (!file.isFile) return null
-        val name = FileNames.clean(file.name).ifBlank { "video" }
+    /**
+     * 复制成品到公共目录。
+     * @param onProgress 复制进度 0..1，供 UI 在“处理中”显示。
+     * @return Success 带公共目录引用；Failure 带可直接展示给用户的原因。
+     */
+    fun publish(
+        context: Context,
+        file: File,
+        onProgress: (Float) -> Unit = {}
+    ): PublishResult {
+        if (!file.isFile) return PublishResult.Failure("源文件不存在，无法保存到公共目录")
+
+        val name = FileNames.publicFileName(file.name)
         val mime = mimeOf(file.extension)
-        return runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                publishToMediaStore(context, file, name, mime)
+        val required = file.length() + 16L * 1024 * 1024
+        val available = availableBytes()
+        if (available in 0 until required) {
+            return PublishResult.Failure(
+                "剩余空间不足：需要约 ${formatSize(required)}，可用 ${formatSize(available)}；" +
+                    "文件已保留在应用私有目录"
+            )
+        }
+        return try {
+            val ref = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                publishToMediaStore(context, file, name, mime, onProgress)
             } else {
-                publishToPublicDir(file, name)
+                publishToPublicDir(file, name, onProgress)
             }
-        }.getOrNull()
+            if (ref == null) {
+                PublishResult.Failure("无法写入公共下载目录，文件已保留在应用私有目录")
+            } else {
+                PublishResult.Success(ref)
+            }
+        } catch (e: Throwable) {
+            PublishResult.Failure(
+                "写入公共目录失败：${e.message ?: e.javaClass.simpleName}；文件已保留在应用私有目录"
+            )
+        }
     }
 
-    private fun publishToMediaStore(context: Context, file: File, name: String, mime: String): String? {
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.Q)
+    private fun publishToMediaStore(
+        context: Context,
+        file: File,
+        name: String,
+        mime: String,
+        onProgress: (Float) -> Unit
+    ): String? {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -50,14 +91,26 @@ object PublicStorage {
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
         try {
             resolver.openOutputStream(uri)?.use { output ->
-                file.inputStream().use { input -> input.copyTo(output) }
+                file.inputStream().use { input ->
+                    copyWithProgress(input, output, file.length(), onProgress)
+                }
             } ?: error("无法写入公共下载目录")
-            resolver.update(
+
+            // 确认写入完整：空间不足时流可能被提前关闭
+            val written = runCatching {
+                resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: -1L
+            }.getOrDefault(-1L)
+            if (written in 0 until file.length()) {
+                error("写入不完整（${formatSize(written)} / ${formatSize(file.length())}）")
+            }
+
+            val visible = resolver.update(
                 uri,
                 ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
                 null,
                 null
             )
+            if (visible <= 0) error("无法完成公共目录写入（IS_PENDING 未清除）")
         } catch (e: Throwable) {
             runCatching { resolver.delete(uri, null, null) }
             throw e
@@ -67,7 +120,11 @@ object PublicStorage {
         return uri.toString()
     }
 
-    private fun publishToPublicDir(file: File, name: String): String? {
+    private fun publishToPublicDir(
+        file: File,
+        name: String,
+        onProgress: (Float) -> Unit
+    ): String? {
         val dir = publicDir() ?: return null
         if (!dir.exists() && !dir.mkdirs()) return null
         var target = File(dir, name)
@@ -76,9 +133,42 @@ object PublicStorage {
             target = File(dir, indexedName(name, index))
             index++
         }
-        file.copyTo(target, overwrite = false)
+        file.inputStream().use { input ->
+            target.outputStream().use { output ->
+                copyWithProgress(input, output, file.length(), onProgress)
+            }
+        }
+        val written = target.length()
+        if (written < file.length()) {
+            runCatching { target.delete() }
+            error("写入不完整（${formatSize(written)} / ${formatSize(file.length())}）")
+        }
         runCatching { file.delete() }
         return target.absolutePath
+    }
+
+    private fun copyWithProgress(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        total: Long,
+        onProgress: (Float) -> Unit
+    ) {
+        val buffer = ByteArray(1024 * 1024)
+        var copied = 0L
+        var lastReport = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            output.write(buffer, 0, read)
+            copied += read
+            val now = System.currentTimeMillis()
+            if (now - lastReport >= 300) {
+                lastReport = now
+                onProgress(if (total > 0) (copied.toFloat() / total).coerceIn(0f, 1f) else 0f)
+            }
+        }
+        output.flush()
+        onProgress(1f)
     }
 
     /** 查询文件名与大小；引用失效时返回 null。 */
@@ -158,6 +248,13 @@ object PublicStorage {
         return File(base, FOLDER)
     }
 
+    /** 公共目录所在卷的可用字节；取不到时返回 -1，表示不做空间判断。 */
+    private fun availableBytes(): Long = runCatching {
+        @Suppress("DEPRECATION")
+        val path = Environment.getExternalStorageDirectory()
+        StatFs(path.absolutePath).availableBytes
+    }.getOrDefault(-1L)
+
     private fun indexedName(name: String, index: Int): String {
         val dot = name.lastIndexOf('.')
         return if (dot > 0) {
@@ -170,4 +267,14 @@ object PublicStorage {
     private fun mimeOf(ext: String): String =
         MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase())
             ?: "application/octet-stream"
+
+    private fun formatSize(bytes: Long): String {
+        if (bytes < 0) return "未知"
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb)
+        return String.format(Locale.US, "%.2f GB", mb / 1024.0)
+    }
 }

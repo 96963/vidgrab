@@ -140,6 +140,22 @@ object FileNames {
         return "$base.$ext"
     }
 
+    /**
+     * 发布到公共目录用的文件名：清洗标题但保留扩展名。
+     * clean() 的 80 字节截断如果作用在“标题 + 扩展名”上，长标题会把 .mp4 截掉。
+     */
+    fun publicFileName(fileName: String): String {
+        val raw = fileName.trim()
+        val dot = raw.lastIndexOf('.')
+        val ext = if (dot > 0 && dot < raw.length - 1) {
+            raw.substring(dot + 1).lowercase().take(10)
+        } else {
+            ""
+        }
+        val base = clean(if (dot > 0) raw.substring(0, dot) else raw).ifBlank { "video" }
+        return if (ext.isBlank()) base else "$base.$ext"
+    }
+
     /** 在 dir 下找一个不冲突的文件名；current 是当前文件本身时直接返回。 */
     fun uniqueFile(dir: File, base: String, ext: String, current: File? = null): File {
         val suffix = if (ext.isBlank()) "" else ".$ext"

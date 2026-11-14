@@ -32,6 +32,8 @@ object YtDlpEngine {
         withContext(Dispatchers.IO) {
             initLock.withLock {
                 if (!initialized) {
+                    // 安装包换了新版 yt-dlp 时，先把已解压的旧版替换掉
+                    runCatching { YtDlpUpdater.syncBundled(context) }
                     YoutubeDL.getInstance().init(context.applicationContext)
                     FFmpeg.getInstance().init(context.applicationContext)
                     // aria2c 解压失败不影响内置下载器

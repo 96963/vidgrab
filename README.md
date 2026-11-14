@@ -4,16 +4,20 @@
 
 介绍页：https://soft-hall-6e48.gjvgfffgh3.workers.dev/
 
+当前版本：1.3.1（versionCode 6，debug 包）
+
 ## 功能
 
 - **链接下载**：粘贴任意 yt-dlp 支持的站点链接，解析标题/缩略图/格式后下载
-- **yt-dlp 在线更新**：设置面板一键检查更新（官方 zipapp，经国内代理下载，失败自动切换源）
+- **yt-dlp 在线更新**：设置面板一键检查更新（官方 zipapp，经国内代理下载，失败自动切换源）；内置 2026.10.26，覆盖安装时自动把旧的内置版本同步到新版本
 - **内置浏览器**：WebView 浏览网页，自动嗅探 `.m3u8` / `.mpd` / `.mp4` / 音频等媒体地址，一键解析下载
+- **网页下载与上传**：网页触发的下载不再无响应（媒体转 App 下载、其它文件交系统下载器）；支持 `<input type=file>`、JS 对话框和第三方登录弹窗
+- **加载失败提示**：网页打不开时显示原因和「重新加载」，不是一片空白
 - **前进/后退**：工具栏返回按钮 + 系统返回键，按网页历史回退
 - **历史与书签**：访问记录与收藏持久化保存（`filesDir/browser_data.json`），菜单面板中查看、跳转、删除
 - **边下边播**：嗅探到的 HLS / DASH / MP4 可直接用 ExoPlayer 播放，缓冲播放、无需先下载；自动携带 Cookie/Referer/UA
 - **广告拦截**：EasyList / EasyPrivacy / EasyList China 生成的约 10 万条域名规则（`assets/ad_rules.txt`）+ 人工补充列表 + 路径规则，支持第三方判定与例外放行；工具栏盾牌可一键开关
-- **下载任务**：2 路并发队列、实时进度/速度/剩余时间、取消、打开文件、通知栏进度
+- **下载任务**：2 路并发队列、实时进度/速度/剩余时间、取消、打开文件、通知栏进度（每个任务独立通知，可直接在通知栏取消，点击回到任务页）
 - **持久化与续传**：任务列表落盘（应用被杀后可恢复），未完成任务重启后自动续传；失败/取消可一键重试；HLS 分片 4 路并发、自动重试 10 次
 - **外部分享**：从其他 App 分享文本/链接可直接进入解析
 
@@ -53,7 +57,7 @@ app/src/main/java/com/vidgrab/app/
 └── ui/                     Compose 界面（下载 / 浏览器 / 任务）
 ```
 
-底层使用 [youtubedl-android](https://github.com/yausername/youtubedl-android) 0.18.1（内置 CPython 3.12、yt-dlp 2025.11.12、FFmpeg、QuickJS），源码与 arm64 预编译库已并入本工程。
+底层使用 [youtubedl-android](https://github.com/yausername/youtubedl-android) 0.18.1（内置 CPython 3.12、yt-dlp 2026.10.26、FFmpeg、QuickJS），源码与 arm64 预编译库已并入本工程。
 
 ## 第三方规则
 

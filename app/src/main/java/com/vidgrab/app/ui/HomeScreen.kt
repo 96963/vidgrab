@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.vidgrab.app.core.DirectDownloader
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.FileNames
@@ -74,6 +75,8 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     initialUrl: String?,
     initialTitle: String? = null,
+    /** 浏览器里点了“下载”按钮：直接走直链下载，不再让 yt-dlp 解析。 */
+    initialDirect: Boolean = false,
     onConsumed: () -> Unit,
     onTaskStarted: () -> Unit
 ) {
@@ -102,21 +105,44 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(initialUrl) {
+    LaunchedEffect(initialUrl, initialDirect) {
         if (!initialUrl.isNullOrBlank()) {
             url = initialUrl
             info = null
             error = null
-            loading = true
-            runCatching { YtDlpEngine.fetchInfo(context, initialUrl) }
-                .onSuccess { parsed ->
-                    // 嗅探到的媒体常解析不出标题，用页面标题兜底
-                    info = parsed.copy(
-                        title = FileNames.resolveTitle(parsed.title, parsed.webpageUrl, initialTitle)
+            if (initialDirect) {
+                loading = false
+                val segment = initialUrl.substringBefore('?').substringAfterLast('/')
+                val name = FileNames.clean(initialTitle ?: segment).ifBlank { "video" }
+                val ext = segment.substringAfterLast('.', "").lowercase()
+                info = MediaInfo(
+                    title = name,
+                    uploader = null,
+                    durationSeconds = 0,
+                    thumbnail = null,
+                    webpageUrl = initialUrl,
+                    formats = listOf(
+                        FormatOption(
+                            id = DirectDownloader.DIRECT_SELECTOR,
+                            label = "直接下载原始文件",
+                            ext = ext.ifBlank { "mp4" },
+                            filesize = 0,
+                            audioOnly = false
+                        )
                     )
-                }
-                .onFailure { error = it.message ?: "解析失败" }
-            loading = false
+                )
+            } else {
+                loading = true
+                runCatching { YtDlpEngine.fetchInfo(context, initialUrl) }
+                    .onSuccess { parsed ->
+                        // 嗅探到的媒体常解析不出标题，用页面标题兜底
+                        info = parsed.copy(
+                            title = FileNames.resolveTitle(parsed.title, parsed.webpageUrl, initialTitle)
+                        )
+                    }
+                    .onFailure { error = it.message ?: "解析失败" }
+                loading = false
+            }
             onConsumed()
         }
     }

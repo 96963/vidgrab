@@ -121,15 +121,19 @@ object DirectDownloader {
     }
 
     private fun finalizeFile(part: File, dir: File, baseName: String): File {
-        var target = File(dir, baseName)
-        var index = 1
         val base = baseName.substringBeforeLast('.', baseName)
         val ext = baseName.substringAfterLast('.', "")
-        while (target.exists()) {
-            target = File(dir, base + "_cp" + index + if (ext.isNotEmpty()) ".$ext" else "")
-            index++
+        val target = FileNames.uniqueFile(dir, base, ext, part)
+        if (part.renameTo(target)) return target
+        // 部分文件系统不允许 rename，退回复制 + 删除；都失败就报错，
+        // 绝不能把 .part 当成成品返回（否则会被发布到公共下载目录）。
+        return runCatching {
+            part.copyTo(target, overwrite = false)
+            part.delete()
+            target
+        }.getOrElse { error ->
+            throw IOException("无法完成下载文件保存：${error.message ?: "重命名失败"}")
         }
-        return if (part.renameTo(target)) target else part
     }
 
     private fun formatSpeed(bytesPerSecond: Double): String {

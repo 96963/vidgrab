@@ -42,6 +42,7 @@ object DownloadStore {
                 progress = item.optDouble("progress", 0.0).toFloat(),
                 filePath = item.optString("filePath").ifBlank { null },
                 error = item.optString("error").ifBlank { null },
+                warning = item.optString("warning").ifBlank { null },
                 createdAt = item.optLong("createdAt", System.currentTimeMillis())
             )
         }
@@ -64,6 +65,7 @@ object DownloadStore {
                     put("progress", task.progress.toDouble())
                     put("filePath", task.filePath ?: "")
                     put("error", task.error ?: "")
+                    put("warning", task.warning ?: "")
                     put("createdAt", task.createdAt)
                 })
             }

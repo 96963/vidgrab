@@ -336,6 +336,15 @@ private fun TaskCard(
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
+                    if (task.state == TaskState.DONE && !task.warning.isNullOrBlank()) {
+                        Text(
+                            task.warning,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     if (task.state == TaskState.DONE) {
                         // 内容 Uri 查询较重，只在引用/标题变化时重新查询
                         remember(task.filePath, task.title) { fileLine(context, task) }?.let {
@@ -382,7 +391,7 @@ private fun TaskCard(
                     }
                 }
             }
-            if (task.state == TaskState.DOWNLOADING) {
+            if (task.state == TaskState.DOWNLOADING || task.state == TaskState.PROCESSING) {
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { task.progress },
@@ -392,6 +401,9 @@ private fun TaskCard(
                 Text(
                     buildString {
                         append((task.progress * 100).toInt()).append('%')
+                        if (task.state == TaskState.PROCESSING) {
+                            append(" · 正在保存到公共目录")
+                        }
                         if (task.speed.isNotBlank()) append(" · ").append(task.speed)
                         if (task.eta.isNotBlank()) append(" · 剩余 ").append(task.eta)
                     },
