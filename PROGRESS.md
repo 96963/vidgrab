@@ -2,6 +2,9 @@
 
 更新：2026-11-14（当前版本 1.4.3 / versionCode 10；P1/P2 已在 vivo V2156A 真机验收，1.4.2 修复浏览器切页播放问题，1.4.3 修复 B 站移动 UA 导致的解析失败）
 
+> 明天继续的完整未完成清单与问题见 [`TODO.md`](TODO.md)。
+
+
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
 已确定：Android 原生（Kotlin + Compose），首版功能 = yt-dlp 站点解析下载 + 内置浏览器嗅探。
