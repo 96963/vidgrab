@@ -188,18 +188,15 @@ fun BrowserScreen(
 
     val pageState = remember { PageState().also { it.url = viewModel.currentUrl } }
 
-    // 离开浏览器页签时暂停网页媒体，回来只恢复之前正在播放的内容
-    LaunchedEffect(isActive) {
-        viewModel.setActive(isActive)
-    }
-    // App 切到后台时也暂停 WebView，避免网页继续出声
+    // 页签切换不打断网页媒体：WebView 保持可见性状态，视频在后台页签继续缓冲/播放，
+    // 切回时无需重新 play()，避免自动播放策略拒绝恢复。
+    // 仅在 App 真正退到后台时暂停 WebView，避免后台出声和耗电。
     val lifecycleOwner = LocalLifecycleOwner.current
-    val activeState = rememberUpdatedState(isActive)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> viewModel.setActive(false)
-                Lifecycle.Event.ON_START -> if (activeState.value) viewModel.setActive(true)
+                Lifecycle.Event.ON_STOP -> viewModel.pauseWebView()
+                Lifecycle.Event.ON_START -> viewModel.resumeWebView()
                 else -> Unit
             }
         }

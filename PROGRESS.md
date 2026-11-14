@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-14（当前版本 1.4.1 / versionCode 8；P1/P2 已在 vivo V2156A 真机验收，1.4.0 与 1.4.1 均安装运行过）
+更新：2026-11-14（当前版本 1.4.2 / versionCode 9；P1/P2 已在 vivo V2156A 真机验收，1.4.2 修复浏览器切页播放问题）
 
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
@@ -125,14 +125,14 @@
 
 目标：浏览器页签媒体暂停、嗅探结果操作与筛选、播放器增强、任务页检索/排序/错误复制、崩溃日志与一键反馈。
 
-- [x] 浏览器页签离开暂停网页媒体、回来只恢复之前正在播放的媒体；App 退后台同样暂停
+- [x] 浏览器页签媒体处理：1.4.1 原方案“离开页签暂停、回来自动 play 恢复”在真机复测中恢复失败；1.4.2 改为页签切换不打断网页媒体，视频在后台页签继续缓冲/播放，切回无需重新 play()，避免自动播放策略拒绝恢复；App 退后台仍暂停 WebView
 - [x] 嗅探结果新增“全部/HLS/DASH/视频/音频”筛选、复制链接、分享链接
 - [x] 检测日志“复制全部”，格式 `HH:mm:ss [来源] 结果 URL`
 - [x] 播放器：0.5x–2.0x 倍速、字幕轨开关/切换、左侧上下滑调亮度、右侧上下滑调音量、画中画（按钮 + 返回桌面自动进入）、按 URL 记录断点续播
 - [x] 任务页：标题/链接搜索、最新/最早/状态/名称排序、失败原因展开/收起/复制、“磁盘文件名”与标题不一致提示
 - [x] `CrashReporter`：未捕获异常写入 `files/crash_log.txt`；设置页“反馈 / 导出崩溃日志”分享日志、版本与设备信息
 - [x] 真机验证（vivo V2156A / Android 11，1.4.1 覆盖安装 1.4.0，数据保留）：
-  - [x] 浏览器切页：测试页视频状态显示 `PLAYING`，切到任务页后变 `PAUSED`，切回浏览器后重新播放恢复 `PLAYING`
+  - [!] 浏览器切页：1.4.1 实测切到任务页变 `PAUSED`，切回浏览器未自动恢复，仍需手动点播放；该问题在 1.4.2 改为“切页不断播”后解决（见下节）
   - [x] 嗅探筛选：`全部/HLS/DASH/视频/音频` 正常；选“音频”显示“暂无该类媒体。”
   - [x] 嗅探日志：`日志` 面板有 `清空 / 复制全部`，条目显示来源、URL、`20:09:20` 时间
   - [x] 播放器：有效 `screenrecord` MP4 可正常播放；倍速 `1.0x → 1.25x`；无字幕轨提示“当前视频没有字幕轨”；`画中画` 成功进入 pinned PiP；右侧上下滑后 `STREAM_MUSIC` 由 `Muted: true` 变 `false`
@@ -141,6 +141,21 @@
   - 限制/未完成：左侧亮度手势未读亮度值；断点续播未做退出重进对比；未制造真实崩溃，`files/crash_log.txt` 生成链路未验证；嗅探复制/分享未逐一点击目标
 
 构建：`assembleDebug` BUILD SUCCESSFUL（32s）；产物 `dist/VidGrab-1.4.1-debug-universal.apk`（141,228,520 B，SHA-256 `EE29C4B4786772E1E0177A46071194697CCF55815B8D24D2792BCA20DFF8D85D`），versionCode 8 / 1.4.1，debug 签名，arm64-v8a + x86_64。
+
+
+## 第 9 批 P2 修复（2026-11-14，v1.4.2 / versionCode 9）
+
+问题：1.4.1 的浏览器切页方案在真机上切到任务页后媒体变 `PAUSED`，切回浏览器不自动恢复；`play()` 受 WebView 自动播放策略/页面生命周期影响，无法稳定自动恢复。
+
+修复：页签切换不再暂停/静音网页媒体，WebView 保持当前可见性状态，视频在后台页签继续播放/缓冲；切回浏览器时仍是 `PLAYING`，无需重新调用 `play()`，也就不存在“恢复失败”。App 真正退到后台时仍通过 `WebView.onPause()` 暂停，回前台 `onResume()`。
+
+- [x] `BrowserViewModel` 移除页签 `setActive` 的 JS 暂停/恢复逻辑，新增 `pauseWebView()` / `resumeWebView()` 仅供 App 前后台生命周期使用
+- [x] `BrowserScreen` 移除 `LaunchedEffect(isActive)` 的切页暂停，仅保留 `LifecycleEventObserver` 的 ON_STOP/ON_START
+- [x] `MainActivity` 不再用页签变化驱动浏览器暂停
+- [x] 真机验证（vivo V2156A / Android 11）：测试页 30 秒视频播放到 `PLAYING t=2.4 muted=0`，切到任务页 2 秒再切回浏览器，仍为 `PLAYING`、`muted=0`（最终清理构建实测 `PLAYING t=7.7 muted=0`），无 `PAUSED`、无需手动点播放
+- 说明：这是“切页不断播”方案，不是“切页暂停再自动恢复”；若后续需要离开页签静音/暂停，需要换成用户手势触发的恢复入口，WebView 自动 `play()` 在真机上不可靠
+
+构建：`assembleDebug` BUILD SUCCESSFUL（22s）；产物 `dist/VidGrab-1.4.2-debug-universal.apk`（141,229,104 B，SHA-256 `D4ED27B0080D633C607D7FC049651718FC58FCBC10D3B04879B5F8C1DC342E6B`），versionCode 9 / 1.4.2，debug 签名，arm64-v8a + x86_64；已安装到 vivo 验证。
 
 
 ## 第 4 批「切页签不丢状态 + 公共目录全流程」真机验证（2026-11-08，vivo V2156A / Android 11 / arm64-v8a）

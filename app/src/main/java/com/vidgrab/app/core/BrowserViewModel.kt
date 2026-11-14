@@ -7,29 +7,6 @@ import kotlinx.coroutines.launch
 
 private const val HOME_URL = "https://cn.bing.com"
 
-private const val PAUSE_JS = """
-(function(){
-  try {
-    window.__vidgrabPaused = window.__vidgrabPaused || [];
-    document.querySelectorAll('video,audio').forEach(function(m){
-      if (!m.paused && !m.ended) {
-        try { m.pause(); window.__vidgrabPaused.push(m); } catch (e) {}
-      }
-    });
-  } catch (e) {}
-})();
-"""
-
-private const val RESUME_JS = """
-(function(){
-  try {
-    var list = window.__vidgrabPaused || [];
-    list.forEach(function(m){ try { m.play().catch(function(){}); } catch (e) {} });
-    window.__vidgrabPaused = [];
-  } catch (e) {}
-})();
-"""
-
 /**
  * 浏览器 ViewModel：持有 WebView 实例与状态，跨页签切换存活
  * 由 MainActivity 通过 viewModels() 获取，生命周期随 Activity
@@ -104,15 +81,14 @@ class BrowserViewModel : ViewModel() {
      * 页签切换时暂停/恢复网页：WebView.onPause 停掉定时器与渲染，
      * JS 只恢复离开前正在播放的媒体，不自动播放用户原本暂停的视频。
      */
-    fun setActive(active: Boolean) {
-        val w = webView ?: return
-        if (active) {
-            w.onResume()
-            w.evaluateJavascript(RESUME_JS, null)
-        } else {
-            w.evaluateJavascript(PAUSE_JS, null)
-            w.onPause()
-        }
+    /** App 退到后台时暂停 WebView，避免后台继续出声/耗电。 */
+    fun pauseWebView() {
+        webView?.onPause()
+    }
+
+    /** App 回到前台时恢复 WebView。 */
+    fun resumeWebView() {
+        webView?.onResume()
     }
 
     override fun onCleared() {
