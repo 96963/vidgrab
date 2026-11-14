@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-14（当前版本 1.4.1 / versionCode 8，P1/P2 已构建，真机验证待设备连接）
+更新：2026-11-14（当前版本 1.4.1 / versionCode 8；P1/P2 已在 vivo V2156A 真机验收，1.4.0 与 1.4.1 均安装运行过）
 
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
@@ -106,7 +106,17 @@
 - [x] 纯视频轨选项：`bestvideo/best`，适合剪辑
 - [x] 中文错误提示：登录/403/404/解析器过期/超时/地区/年龄/版权/空间不足，失败卡片可一键更新 yt-dlp 后重试
 - [x] 直链 4 连接：≥8MB、HTTP 200 且 `Accept-Ranges: bytes` 时 4 段并发；失败/取消删除 `.part` 重下，不支持断点续传
-- [ ] 真机验证：当前 `adb devices` 无设备，以下均未在真机执行——暂停/继续、仅 Wi‑Fi、限速、SAF 目录、字幕/封面、批量/播放列表、错误提示、4 连接直链
+- [x] 真机验证（vivo V2156A / Android 11 / arm64-v8a，序列号 `35059217030026B`）：
+  - [x] 设置：分片并发 4/8/16 可切；同时下载数 2/3/4 切到 3；仅 Wi‑Fi 打开；限速切 512 KB/s；`/data/data/com.vidgrab.app/shared_prefs/download_settings.xml` 实际写入 `speed_limit_kbps=512`、`wifi_only=true`、`concurrent=3`
+  - [x] 暂停/继续：任务状态 `DOWNLOADING → PAUSED → DOWNLOADING`，界面进度与按钮同步
+  - [x] `.part` 保留：暂停后外部目录 `.part` 18,366,464 B / 22,298,624 B 仍在；取消后 `.part` 也保留
+  - [x] Range 续传：测试服务新增 `/range-slow.mp4`（206 + `Content-Range`）；暂停时 `.part` 32,019,456 B，继续后 32,576,512 B，任务最终 `DONE`，确认不是从头重下
+  - [x] 仅 Wi‑Fi：关闭 Wi‑Fi 后新任务置 `PAUSED`，`warning=仅 Wi‑Fi 下载已开启，等待 Wi‑Fi`；重开 Wi‑Fi 并回到前台后任务恢复 `DOWNLOADING`
+  - [x] 文件名双确认：主按钮 → 弹窗 → “开始下载”，两次点击；弹窗含字幕/封面复选框，可勾选
+  - [x] 中文错误：`404` 显示“视频不存在或已被删除（404），请检查链接是否有效”
+  - [x] 直链：32 MB `/range.mp4` 走直链通道完成，落到 `Download/VidGrab`，任务 `DONE`；4 连接路径由代码与完成任务验证（未抓包计数）
+  - [x] 通知栏：任务通知 actions=2（暂停/取消），服务通知存在；PendingIntent 已确认
+  - 限制/未完成：SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；批量弹窗可打开，但 ADB 自动输入多链接会拼成一条，真实批量入队未验证；本地源无字幕轨，字幕/封面只验证勾选项与任务字段；通知按钮未手动点击
 
 构建：`assembleDebug` BUILD SUCCESSFUL（31s）；产物 `dist/VidGrab-1.4.0-debug-universal.apk`（141,201,416 B，SHA-256 `13EC57510FE87C9705B4E96408E222AB333736CE7C462B78D70215611C39DE3A`），versionCode 7 / 1.4.0，debug 签名，arm64-v8a + x86_64。
 
@@ -121,7 +131,14 @@
 - [x] 播放器：0.5x–2.0x 倍速、字幕轨开关/切换、左侧上下滑调亮度、右侧上下滑调音量、画中画（按钮 + 返回桌面自动进入）、按 URL 记录断点续播
 - [x] 任务页：标题/链接搜索、最新/最早/状态/名称排序、失败原因展开/收起/复制、“磁盘文件名”与标题不一致提示
 - [x] `CrashReporter`：未捕获异常写入 `files/crash_log.txt`；设置页“反馈 / 导出崩溃日志”分享日志、版本与设备信息
-- [ ] 真机验证：当前无设备，P2 全部功能未在真机执行
+- [x] 真机验证（vivo V2156A / Android 11，1.4.1 覆盖安装 1.4.0，数据保留）：
+  - [x] 浏览器切页：测试页视频状态显示 `PLAYING`，切到任务页后变 `PAUSED`，切回浏览器后重新播放恢复 `PLAYING`
+  - [x] 嗅探筛选：`全部/HLS/DASH/视频/音频` 正常；选“音频”显示“暂无该类媒体。”
+  - [x] 嗅探日志：`日志` 面板有 `清空 / 复制全部`，条目显示来源、URL、`20:09:20` 时间
+  - [x] 播放器：有效 `screenrecord` MP4 可正常播放；倍速 `1.0x → 1.25x`；无字幕轨提示“当前视频没有字幕轨”；`画中画` 成功进入 pinned PiP；右侧上下滑后 `STREAM_MUSIC` 由 `Muted: true` 变 `false`
+  - [x] 任务页：搜索“range”过滤到 URL 命中的任务；`最新/最早` 排序生效；失败任务红字中文错误、`展开/收起`、`复制错误` 均可用；`磁盘文件名: ...` 不一致提示显示
+  - [x] 反馈：设置页 `反馈 / 导出崩溃日志` 拉起分享面板，标题 `VidGrab 反馈`、副标题 `版本：1.4.1 (8)`
+  - 限制/未完成：左侧亮度手势未读亮度值；断点续播未做退出重进对比；未制造真实崩溃，`files/crash_log.txt` 生成链路未验证；嗅探复制/分享未逐一点击目标
 
 构建：`assembleDebug` BUILD SUCCESSFUL（32s）；产物 `dist/VidGrab-1.4.1-debug-universal.apk`（141,228,520 B，SHA-256 `EE29C4B4786772E1E0177A46071194697CCF55815B8D24D2792BCA20DFF8D85D`），versionCode 8 / 1.4.1，debug 签名，arm64-v8a + x86_64。
 
