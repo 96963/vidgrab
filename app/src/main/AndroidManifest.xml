@@ -51,12 +51,18 @@
             android:name=".PlayerActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.VidGrab" />
 
         <service
             android:name=".core.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- 通知栏“取消”按钮 -->
+        <receiver
+            android:name=".core.NotificationActionReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

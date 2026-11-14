@@ -1,7 +1,7 @@
 package com.vidgrab.app.core
 
 enum class TaskState {
-    QUEUED, DOWNLOADING, PROCESSING, DONE, ERROR, CANCELED
+    QUEUED, DOWNLOADING, PROCESSING, PAUSED, DONE, ERROR, CANCELED
 }
 
 /** 一个可下载的格式选项，id 直接作为 yt-dlp 的 -f 选择器。 */
@@ -35,6 +35,12 @@ data class DownloadTask(
     val eta: String = "",
     val filePath: String? = null,
     val error: String? = null,
+    /** 非致命提示，例如“未能写入公共目录，已保存在应用私有目录：xxx”。 */
+    val warning: String? = null,
+    /** 同时保存字幕（yt-dlp --write-subs）。 */
+    val writeSubs: Boolean = false,
+    /** 同时保存封面（yt-dlp --write-thumbnail）。 */
+    val writeThumbnail: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
 

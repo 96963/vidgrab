@@ -1,6 +1,7 @@
 package com.vidgrab.app.core
 
 import android.content.Context
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
@@ -32,6 +33,8 @@ object YtDlpEngine {
         withContext(Dispatchers.IO) {
             initLock.withLock {
                 if (!initialized) {
+                    // 安装包换了新版 yt-dlp 时，先把已解压的旧版替换掉
+                    runCatching { YtDlpUpdater.syncBundled(context) }
                     YoutubeDL.getInstance().init(context.applicationContext)
                     FFmpeg.getInstance().init(context.applicationContext)
                     // aria2c 解压失败不影响内置下载器
@@ -44,6 +47,40 @@ object YtDlpEngine {
             }
         }
     }
+
+    /** 播放列表展开：--flat-playlist 只取条目，不解析每个视频的格式。 */
+    suspend fun fetchPlaylistEntries(context: Context, url: String): List<Pair<String, String>> =
+        withContext(Dispatchers.IO) {
+            ensureReady(context)
+            val request = YoutubeDLRequest(url)
+                .addOption("--flat-playlist")
+                .addOption("--dump-json")
+                .addOption("--no-warnings")
+                .addOption("--socket-timeout", "15")
+            request.addDetectedHeaders(url)
+            val response = YoutubeDL.getInstance().execute(request)
+            val mapper = ObjectMapper()
+            val roots = response.out.lineSequence()
+                .mapNotNull { line ->
+                    runCatching { mapper.readTree(line) }.getOrNull()
+                }
+                .toList()
+            val first = roots.firstOrNull() ?: return@withContext emptyList()
+            if (first.path("_type").asText("") != "playlist") return@withContext emptyList()
+            val entries = first.path("entries")
+            if (!entries.isArray) return@withContext emptyList()
+            entries.mapIndexedNotNull { index, entry ->
+                val rawUrl = entry.path("webpage_url").asText("")
+                    .ifBlank { entry.path("url").asText("") }
+                val target = when {
+                    rawUrl.startsWith("http") -> rawUrl
+                    else -> entry.path("id").asText("").takeIf { it.isNotBlank() }
+                        ?.let { "https://www.youtube.com/watch?v=$it" }
+                } ?: return@mapIndexedNotNull null
+                val title = entry.path("title").asText("").ifBlank { "视频 ${index + 1}" }
+                target to title
+            }.take(200)
+        }
 
     /** 解析链接，返回标题、缩略图和可选格式列表。 */
     suspend fun fetchInfo(context: Context, url: String): MediaInfo = withContext(Dispatchers.IO) {
@@ -102,9 +139,9 @@ object YtDlpEngine {
         return !path.endsWith(".m3u8") && !path.endsWith(".mpd")
     }
 
-    /** 浏览器嗅探到的直链，通常需要原页面的 Cookie/Referer/UA 才能访问。 */
+    /** 浏览器 Cookie（按域名复用）+ 嗅探到的 Referer/UA，直链和 yt-dlp 都带上。 */
     private fun YoutubeDLRequest.addDetectedHeaders(url: String): YoutubeDLRequest {
-        MediaSniffer.headersFor(url).forEach { (name, value) ->
+        CookieStore.headersFor(url).forEach { (name, value) ->
             if (name.isNotBlank() && value.isNotBlank()) {
                 addOption("--add-header", "$name: $value")
             }
@@ -118,6 +155,14 @@ object YtDlpEngine {
         result["best"] = FormatOption(
             id = "bestvideo*+bestaudio/best",
             label = "最佳画质（自动合并）",
+            ext = "mp4",
+            filesize = 0,
+            audioOnly = false
+        )
+
+        result["videoOnly"] = FormatOption(
+            id = "bestvideo/best",
+            label = "仅视频轨（无音频，适合剪辑）",
             ext = "mp4",
             filesize = 0,
             audioOnly = false
@@ -187,7 +232,21 @@ object YtDlpEngine {
             if (!useAria2c) throw e
             runDownload(task, dir, before, false, onProgress, onFile)
         }
-        return renameToTitle(produced, task.title, task.url)
+        val result = renameToTitle(produced, task.title, task.url)
+        publishExtras(context, dir, before, result)
+        return result
+    }
+
+    /** 字幕/封面等附加文件单独发布到公共目录；主视频仍由下载管理器发布。 */
+    private fun publishExtras(context: Context, dir: File, before: Set<String>, main: File?) {
+        val extraExtensions = setOf("srt", "vtt", "ass", "ssa", "jpg", "jpeg", "png", "webp")
+        val mainPath = main?.absolutePath
+        dir.listFiles()
+            ?.filter { it.isFile && it.name !in before && it.absolutePath != mainPath }
+            ?.filter { it.extension.lowercase() in extraExtensions }
+            ?.forEach { extra ->
+                PublicStorage.publish(context, extra)
+            }
     }
 
     private fun runDownload(
@@ -212,6 +271,19 @@ object YtDlpEngine {
             .addOption("--retries", 10)
             .addOption("--fragment-retries", 10)
             .addOption("--concurrent-fragments", DownloadSettings.fragments)
+        if (DownloadSettings.speedLimitKbps > 0) {
+            request.addOption("--limit-rate", "${DownloadSettings.speedLimitKbps}K")
+        }
+        if (task.writeSubs) {
+            request.addOption("--write-subs")
+            request.addOption("--write-auto-subs")
+            request.addOption("--sub-langs", "zh.*,en.*")
+            request.addOption("--convert-subs", "srt")
+        }
+        if (task.writeThumbnail) {
+            request.addOption("--write-thumbnail")
+            request.addOption("--convert-thumbnails", "jpg")
+        }
         if (useAria2c) {
             request.addOption("--downloader", "libaria2c.so")
         }

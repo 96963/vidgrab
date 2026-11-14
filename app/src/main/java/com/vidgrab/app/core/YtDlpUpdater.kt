@@ -1,6 +1,7 @@
 package com.vidgrab.app.core
 
 import android.content.Context
+import com.vidgrab.app.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -42,11 +43,44 @@ object YtDlpUpdater {
         if (target.exists()) {
             readVersion(target)?.let { return@withContext it }
         }
-        runCatching {
-            context.assets.open("ytdlp").use { input ->
-                readVersion(input)
+        bundledVersion(context)
+    }
+
+    /** 安装包内置的 yt-dlp 版本（res/raw/ytdlp）。 */
+    fun bundledVersion(context: Context): String? = runCatching {
+        context.resources.openRawResource(R.raw.ytdlp).use { readVersion(it) }
+    }.getOrNull()
+
+    /**
+     * 升级安装后，把内置版本同步到已解压目录：只有内置比现有新时才覆盖，
+     * 避免把用户在线更新过的新版又换回旧的。
+     * 返回同步后实际可用的版本号。
+     */
+    suspend fun syncBundled(context: Context): String? = withContext(Dispatchers.IO) {
+        val bundled = bundledVersion(context) ?: return@withContext null
+        val target = targetFile(context)
+        val installed = if (target.exists()) readVersion(target) else null
+        if (installed == null || compare(bundled, installed) > 0) {
+            val parent = target.parentFile ?: return@withContext bundled
+            if (!parent.exists() && !parent.mkdirs()) return@withContext bundled
+            val temp = File(parent, "yt-dlp.bundled")
+            runCatching {
+                context.resources.openRawResource(R.raw.ytdlp).use { input ->
+                    FileOutputStream(temp).use { output -> input.copyTo(output) }
+                }
+                if (target.exists() && !target.delete()) error("无法替换旧版本")
+                if (!temp.renameTo(target)) {
+                    temp.copyTo(target, overwrite = true)
+                    temp.delete()
+                }
+                bundled
+            }.getOrElse {
+                temp.delete()
+                installed
             }
-        }.getOrNull()
+        } else {
+            installed
+        }
     }
 
     suspend fun update(

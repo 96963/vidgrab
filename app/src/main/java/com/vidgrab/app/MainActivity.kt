@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
 
     private val pendingUrl = mutableStateOf<String?>(null)
     private val pendingTitle = mutableStateOf<String?>(null)
+    private val pendingDirect = mutableStateOf(false)
     private val selectedTab = mutableIntStateOf(0)
     private val browserViewModel: BrowserViewModel by viewModels()
 
@@ -109,9 +110,11 @@ class MainActivity : ComponentActivity() {
                             HomeScreen(
                                 initialUrl = pending,
                                 initialTitle = pendingTitle.value,
+                                initialDirect = pendingDirect.value,
                                 onConsumed = {
                                     pendingUrl.value = null
                                     pendingTitle.value = null
+                                    pendingDirect.value = false
                                 },
                                 onTaskStarted = { tab = 2 }
                             )
@@ -128,9 +131,10 @@ class MainActivity : ComponentActivity() {
                                 viewModel = browserViewModel,
                                 isActive = tab == 1,
                                 onUrlChange = { browserViewModel.updateUrl(it) },
-                                onDownload = { url, title ->
+                                onDownload = { url, title, direct ->
                                     pendingUrl.value = url
                                     pendingTitle.value = title
+                                    pendingDirect.value = direct
                                     tab = 0
                                 }
                             )
@@ -159,6 +163,10 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
+        if (intent.getBooleanExtra(EXTRA_OPEN_TASKS, false)) {
+            selectedTab.intValue = 2
+            return
+        }
         intent.getStringExtra(EXTRA_BROWSER_URL)?.let { url ->
             browserViewModel.loadUrl(url)
             selectedTab.intValue = 1
@@ -201,6 +209,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_BROWSER_URL = "browser_url"
+        const val EXTRA_OPEN_TASKS = "open_tasks"
         private val URL_REGEX = Regex("""https?://[^\s]+""")
     }
 }

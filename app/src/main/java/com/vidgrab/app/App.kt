@@ -3,6 +3,8 @@ package com.vidgrab.app
 import android.app.Application
 import com.vidgrab.app.core.AdBlocker
 import com.vidgrab.app.core.BrowserStore
+import com.vidgrab.app.core.CookieStore
+import com.vidgrab.app.core.CrashReporter
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.Notifications
@@ -18,9 +20,11 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashReporter.install(this)
         Notifications.createChannel(this)
         SiteSettings.init(this)
         BrowserStore.init(this)
+        CookieStore.init(this)
         DownloadSettings.init(this)
         DownloadManager.init(this)
         // 首次启动在后台解压 Python / FFmpeg，避免拖慢首屏

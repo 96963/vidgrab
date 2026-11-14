@@ -22,6 +22,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -39,10 +41,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -50,6 +55,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadTask
 import com.vidgrab.app.core.PublicStorage
+import com.vidgrab.app.core.YtDlpUpdater
+import kotlinx.coroutines.launch
 import com.vidgrab.app.core.TaskState
 import java.io.File
 
@@ -66,6 +73,21 @@ fun TasksScreen() {
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showBatchDialog by remember { mutableStateOf(false) }
     var batchDeleteFiles by remember { mutableStateOf(true) }
+    var query by remember { mutableStateOf("") }
+    var sortMode by remember { mutableStateOf("最新") }
+    val displayed = remember(tasks, query, sortMode) {
+        val filtered = tasks.filter { task ->
+            query.isBlank() ||
+                task.title.contains(query, ignoreCase = true) ||
+                task.url.contains(query, ignoreCase = true)
+        }
+        when (sortMode) {
+            "最早" -> filtered.sortedBy { it.createdAt }
+            "状态" -> filtered.sortedWith(compareBy({ it.state.ordinal }, { -it.createdAt }))
+            "名称" -> filtered.sortedBy { it.title.lowercase() }
+            else -> filtered.sortedByDescending { it.createdAt }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -117,8 +139,37 @@ fun TasksScreen() {
             )
             return@Column
         }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(8.dp),
+            placeholder = { Text("搜索标题或链接") },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    TextButton(onClick = { query = "" }) { Text("清空") }
+                }
+            }
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            listOf("最新", "最早", "状态", "名称").forEach { mode ->
+                TextButton(onClick = { sortMode = mode }) {
+                    Text(
+                        mode,
+                        color = if (sortMode == mode) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+        if (displayed.isEmpty()) {
+            Spacer(Modifier.height(24.dp))
+            Text("没有匹配的任务。", style = MaterialTheme.typography.bodyMedium)
+        }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(tasks, key = { it.id }) { task ->
+            items(displayed, key = { it.id }) { task ->
                 TaskCard(
                     task = task,
                     selecting = selecting,
@@ -127,6 +178,8 @@ fun TasksScreen() {
                         selected = if (task.id in selected) selected - task.id else selected + task.id
                     },
                     onCancel = { DownloadManager.cancel(task.id) },
+                    onPause = { DownloadManager.pause(task.id) },
+                    onResume = { DownloadManager.resume(task.id) },
                     onRemove = {
                         deleteFile = DownloadManager.hasFile(task)
                         deleteTarget = task
@@ -300,12 +353,18 @@ private fun TaskCard(
     selected: Boolean,
     onSelect: () -> Unit,
     onCancel: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
     onRemove: () -> Unit,
     onRetry: () -> Unit,
     onRename: () -> Unit,
     onOpen: () -> Unit
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var updatingYtdlp by remember { mutableStateOf(false) }
+    var errorExpanded by remember(task.id, task.error) { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,6 +395,52 @@ private fun TaskCard(
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
                     )
+                    if (!task.warning.isNullOrBlank() &&
+                        (task.state == TaskState.DONE ||
+                            task.state == TaskState.PAUSED ||
+                            task.state == TaskState.ERROR)
+                    ) {
+                        Text(
+                            task.warning,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (task.state == TaskState.ERROR && !task.error.isNullOrBlank()) {
+                        Text(
+                            task.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = if (errorExpanded) 20 else 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row {
+                            TextButton(onClick = { errorExpanded = !errorExpanded }) {
+                                Text(if (errorExpanded) "收起" else "展开")
+                            }
+                            TextButton(onClick = {
+                                clipboard.setText(AnnotatedString(task.error.orEmpty()))
+                                android.widget.Toast.makeText(context, "错误信息已复制", android.widget.Toast.LENGTH_SHORT).show()
+                            }) { Text("复制错误") }
+                        }
+                    }
+                    if (task.state == TaskState.ERROR) {
+                        TextButton(
+                            enabled = !updatingYtdlp,
+                            onClick = {
+                                scope.launch {
+                                    updatingYtdlp = true
+                                    YtDlpUpdater.update(context) { _, _ -> }
+                                    updatingYtdlp = false
+                                    DownloadManager.retry(task.id)
+                                }
+                            }
+                        ) {
+                            Text(if (updatingYtdlp) "正在更新 yt-dlp…" else "更新 yt-dlp 并重试")
+                        }
+                    }
                     if (task.state == TaskState.DONE) {
                         // 内容 Uri 查询较重，只在引用/标题变化时重新查询
                         remember(task.filePath, task.title) { fileLine(context, task) }?.let {
@@ -347,6 +452,15 @@ private fun TaskCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                        remember(task.filePath, task.title) { diskNameIfDifferent(context, task) }?.let { name ->
+                            Text(
+                                "磁盘文件名：$name",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
                 if (!selecting) when (task.state) {
@@ -354,8 +468,19 @@ private fun TaskCard(
                         IconButton(onClick = onRename) {
                             Icon(Icons.Default.Edit, contentDescription = "重命名")
                         }
+                        IconButton(onClick = onPause) {
+                            Icon(Icons.Default.Pause, contentDescription = "暂停")
+                        }
                         IconButton(onClick = onCancel) {
                             Icon(Icons.Default.Stop, contentDescription = "取消")
+                        }
+                    }
+                    TaskState.PAUSED -> {
+                        IconButton(onClick = onResume) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "继续")
+                        }
+                        IconButton(onClick = onRemove) {
+                            Icon(Icons.Default.Delete, contentDescription = "删除")
                         }
                     }
                     TaskState.DONE -> {
@@ -382,7 +507,9 @@ private fun TaskCard(
                     }
                 }
             }
-            if (task.state == TaskState.DOWNLOADING) {
+            if (task.state == TaskState.DOWNLOADING || task.state == TaskState.PROCESSING ||
+                task.state == TaskState.PAUSED
+            ) {
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { task.progress },
@@ -391,7 +518,11 @@ private fun TaskCard(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     buildString {
+                        if (task.state == TaskState.PAUSED) append("已暂停 · ")
                         append((task.progress * 100).toInt()).append('%')
+                        if (task.state == TaskState.PROCESSING) {
+                            append(" · 正在保存到公共目录")
+                        }
                         if (task.speed.isNotBlank()) append(" · ").append(task.speed)
                         if (task.eta.isNotBlank()) append(" · 剩余 ").append(task.eta)
                     },
@@ -418,12 +549,21 @@ private fun fileLine(context: android.content.Context, task: DownloadTask): Stri
     return if (size.isBlank()) location else "$size · $location"
 }
 
+/** 标题和磁盘文件名不一致时单独提示，避免用户按标题找不到文件。 */
+private fun diskNameIfDifferent(context: android.content.Context, task: DownloadTask): String? {
+    val ref = task.filePath ?: return null
+    val info = PublicStorage.info(context, ref) ?: return null
+    val diskBase = info.name.substringBeforeLast('.', info.name)
+    return if (diskBase == task.title) null else info.name
+}
+
 private fun stateText(task: DownloadTask): String = when (task.state) {
     TaskState.QUEUED -> "排队中"
     TaskState.DOWNLOADING -> "下载中"
     TaskState.PROCESSING -> "处理中"
+    TaskState.PAUSED -> "已暂停"
     TaskState.DONE -> "已完成"
-    TaskState.ERROR -> "失败：${task.error ?: "未知错误"}"
+    TaskState.ERROR -> "失败"
     TaskState.CANCELED -> "已取消"
 }
 

@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-08（当前版本 1.1.0 / versionCode 3）
+更新：2026-11-14（当前版本 1.4.1 / versionCode 8，P1/P2 已构建，真机验证待设备连接）
 
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
@@ -25,7 +25,7 @@
 - [x] 逆向分析两个 APK（架构见下）
 - [x] 安装 Android SDK / Gradle
 - [x] 工程骨架：Gradle 配置、Manifest、基础资源
-- [x] 并入 youtubedl-android 0.18.1 源码与 arm64 jniLibs（Python 3.12、yt-dlp 2025.11.12、FFmpeg、QuickJS）
+- [x] 并入 youtubedl-android 0.18.1 源码与 arm64 jniLibs（Python 3.12、内置 yt-dlp 2026.10.26、FFmpeg、QuickJS）
 - [x] Kotlin 业务：yt-dlp 封装、下载队列/前台服务/通知、Compose 三页、WebView 嗅探（含 Cookie/Referer/UA 透传）
 - [x] 编译 APK：`dist/VidGrab-1.0.0-debug-arm64.apk`（package `com.vidgrab.app`，targetSdk 35，仅 arm64-v8a，debug 签名）
 - [x] APK 静态校验：包名/权限/ABI/签名/内置库均正常
@@ -42,6 +42,88 @@
 - [x] 拦截增强：引入 EasyList / EasyPrivacy / EasyList China，生成约 9.6 万条域名规则 + 5800 条第三方规则 + 573 条例外；匹配改为域名后缀逐级查表，支持第三方判定
 - [x] 新增边下边播：Media3 ExoPlayer（HLS/DASH/MP4），嗅探列表每项加「播放」，真机验证 MP4 与 m3u8 均可播放；请求头复用嗅探结果
 - [x] 图标修复：改用 Adaptive Icon（背景/前景/monochrome）+ 五档 PNG + roundIcon，通知栏改用单色 `ic_stat_download`，桌面显示正常
+
+
+## 第 5 批 P0 修复（2026-11-14，v1.3.0 / versionCode 5）
+
+本轮只做“会直接出错/让用户困惑”的 P0 项，编译通过，**尚未真机验证**（当前没有连接设备）。
+
+- [x] 浏览器下载监听：网页里的下载按钮/附件链接不再无反应
+  - 媒体文件（video/audio、常见媒体扩展名）转到下载页，按直链下载处理
+  - 非媒体（zip/pdf 等）交给系统 DownloadManager，落到 `Download/VidGrab`
+- [x] WebChromeClient：`<input type=file>` 文件选择器、JS `alert/confirm/prompt` 对话框恢复
+- [x] 多窗口：`window.open` / `target=_blank` 由独立 WebView 弹窗承载（用户点击才弹，广告自动弹被挡），与主页面共享 Cookie，第三方登录可用
+- [x] 外部 scheme：`tel:` / `mailto:` / `intent://` 交给系统应用打开，没有应用可处理时给出提示（原先静默拦截）
+- [x] 网页加载失败：`onReceivedError` / `onReceivedHttpError` 显示自定义错误页 + 「重新加载」
+- [x] 通知：每个任务一条独立通知（原先共用一个 id，只看得到最后一个任务）
+  - 点通知回到「任务」页；通知栏直接「取消」任务；进度按 1.2 秒节流刷新（原先只在开始推一次）
+  - 完成/失败/取消/删除任务时清理对应通知
+- [x] 公共目录落盘：失败不再静默回退
+  - `PublishResult` 带失败原因，任务卡片显示在「已完成」下方
+  - 复制前检查剩余空间（源文件 + 16MB），不足时保留私有文件并提示
+  - 复制过程上报进度，任务显示「处理中 x% · 正在保存到公共目录」
+  - 写完用 `ParcelFileDescriptor.statSize` 校验长度，不完整则删掉 pending 条目并报错
+- [x] 文件名：新增 `FileNames.publicFileName`，发布到公共目录时先清洗标题再拼扩展名，避免 80 字节截断把 `.mp4` 截掉
+- [x] `DirectDownloader`：重命名失败时不再把 `.part` 当成品返回；改为 copy+delete 兜底，仍失败抛 `IOException`
+- [x] Android 15 前台服务：`DataSync` 类型改用 `ServiceCompat.startForeground`，实现 `Service.onTimeout`（约 6 小时上限）——停止前台服务、把进行中任务标为可重试错误并保留 `.part`
+- [ ] 待真机验证：浏览器下载/上传/弹窗、通知取消、公共目录失败提示、Android 15 超时行为
+
+构建：`assembleDebug` BUILD SUCCESSFUL（38s）；产物 `dist/VidGrab-1.3.0-debug-universal.apk`（141,440,212 B，SHA-256 `5EA69F3D…59307728F`），debug 签名、arm64-v8a + x86_64。
+
+
+## 第 6 批 内置 yt-dlp 升级（2026-11-14，v1.3.1 / versionCode 6）
+
+- [x] 内置 `res/raw/ytdlp` 从 `2025.11.12` 升到 `2026.10.26`（官方 zipapp，3,073,072 B，经 `ghfast.top` 代理下载并校验 `yt_dlp/version.py`）
+- [x] `YtDlpUpdater.installedVersion` 的兜底从 `assets.open("ytdlp")` 改为 `res/raw/ytdlp`（原路径资源不存在，首次启动前会读不到内置版本）
+- [x] 新增 `YtDlpUpdater.syncBundled`：`YtDlpEngine.ensureReady` 初始化前比较内置与已解压版本，只有内置更新时才覆盖 `no_backup/youtubedl-android/yt-dlp/yt-dlp`，不会把用户在线更新过的新版换回旧版
+- [x] 通知通道改为 `downloads_v2`（IMPORTANCE_DEFAULT + 静音/无震动/无角标，priority DEFAULT）；原 `downloads` 为 LOW，MIUI/HyperOS 会归入“静默通知”并隐藏“取消”按钮
+- [x] “下载文件名”确认机制按用户要求保留两次点击（打开弹窗 + 弹窗内确认）
+
+构建：`assembleDebug` BUILD SUCCESSFUL（17s）；产物 `dist/VidGrab-1.3.1-debug-universal.apk`（141,234,992 B，SHA-256 `99ADFCC1E5B60AF41A3D08C8782FDA1998E8F0012E0C07094AE10F758A1BF929`），versionCode 6 / 1.3.1，debug 签名，arm64-v8a + x86_64。
+
+真机（Xiaomi 24122RKC7C / Android 16 / arm64）：
+- [x] 覆盖安装 1.3.1 成功，应用数据目录保留；设置页显示「yt-dlp 版本：2026.10.26」
+- [x] 升级同步：安装前已解压文件为 2025.11.12（3,170,726 B），启动后变为 2026.10.26（3,073,072 B）
+- [x] yt-dlp 路径真实下载：本地 32MB MP4 经 yt-dlp 解析（最佳画质）下载并发布到 `Download/VidGrab/127.0.0.1 20261114-1813.mp4`（33,554,432 B，MediaStore `_id=1000038847`）
+- [x] 通知栏进度、完成通知正常，点通知回任务页
+- [x] 通知“取消”：`dumpsys notification` 确认 `actions=1 "取消"`；用 shell 广播触发同一个 `NotificationActionReceiver` 后，任务变为 CANCELED（进度 38.3%）、通知消失、`.part` 保留，任务页显示「已取消」
+- 限制：MIUI 通知卡片不提供展开/操作区手势，通知栏按钮本身未手动点击；接收器与清理链路已验证。`run-as` 以应用 UID 执行 `am broadcast` 被 `INTERACT_ACROSS_USERS` 拒绝，shell 广播可送达（`result=0` 是结果码，不是送达数）
+
+
+## 第 7 批 P1（2026-11-14，v1.4.0 / versionCode 7）
+
+目标：登录态复用、下载控制、批量/播放列表、保存目录与附加文件、中文错误提示、直链多连接。
+
+- [x] Cookie/登录态：新增 `CookieStore`，按 host 持久化 WebView Cookie；嗅探、播放器、yt-dlp、直链都复用
+- [x] 暂停/继续：`TaskState.PAUSED`，暂停时取消 job / 直链 / yt-dlp 进程并保留 `.part`，继续走 `--continue`
+- [x] 并发数可配置（2/3/4，默认 2），运行中任务不受影响
+- [x] 仅 Wi‑Fi：排队前无 Wi‑Fi 置 PAUSED，回 Wi‑Fi 自动恢复；下载途中切流量暂停并保留 `.part`
+- [x] 限速：0/512/1024/2048/4096 KB/s；yt-dlp `--limit-rate`，直链单连接与多连接均节流
+- [x] 通知栏暂停/继续/取消按钮（`NotificationActionReceiver`）
+- [x] 批量/播放列表：按空白拆分多条链接；`--flat-playlist --dump-json` 解析播放列表，最多 200 条
+- [x] 保存目录：`OpenDocumentTree` + 持久化 URI 权限，`PublicStorage` 支持 SAF 创建/写入/校验/重命名/删除
+- [x] 字幕/封面：下载前勾选“同时保存字幕”“同时保存封面”，srt/vtt/ass/jpg/png/webp 一并发布到公共目录
+- [x] 纯视频轨选项：`bestvideo/best`，适合剪辑
+- [x] 中文错误提示：登录/403/404/解析器过期/超时/地区/年龄/版权/空间不足，失败卡片可一键更新 yt-dlp 后重试
+- [x] 直链 4 连接：≥8MB、HTTP 200 且 `Accept-Ranges: bytes` 时 4 段并发；失败/取消删除 `.part` 重下，不支持断点续传
+- [ ] 真机验证：当前 `adb devices` 无设备，以下均未在真机执行——暂停/继续、仅 Wi‑Fi、限速、SAF 目录、字幕/封面、批量/播放列表、错误提示、4 连接直链
+
+构建：`assembleDebug` BUILD SUCCESSFUL（31s）；产物 `dist/VidGrab-1.4.0-debug-universal.apk`（141,201,416 B，SHA-256 `13EC57510FE87C9705B4E96408E222AB333736CE7C462B78D70215611C39DE3A`），versionCode 7 / 1.4.0，debug 签名，arm64-v8a + x86_64。
+
+
+## 第 8 批 P2（2026-11-14，v1.4.1 / versionCode 8）
+
+目标：浏览器页签媒体暂停、嗅探结果操作与筛选、播放器增强、任务页检索/排序/错误复制、崩溃日志与一键反馈。
+
+- [x] 浏览器页签离开暂停网页媒体、回来只恢复之前正在播放的媒体；App 退后台同样暂停
+- [x] 嗅探结果新增“全部/HLS/DASH/视频/音频”筛选、复制链接、分享链接
+- [x] 检测日志“复制全部”，格式 `HH:mm:ss [来源] 结果 URL`
+- [x] 播放器：0.5x–2.0x 倍速、字幕轨开关/切换、左侧上下滑调亮度、右侧上下滑调音量、画中画（按钮 + 返回桌面自动进入）、按 URL 记录断点续播
+- [x] 任务页：标题/链接搜索、最新/最早/状态/名称排序、失败原因展开/收起/复制、“磁盘文件名”与标题不一致提示
+- [x] `CrashReporter`：未捕获异常写入 `files/crash_log.txt`；设置页“反馈 / 导出崩溃日志”分享日志、版本与设备信息
+- [ ] 真机验证：当前无设备，P2 全部功能未在真机执行
+
+构建：`assembleDebug` BUILD SUCCESSFUL（32s）；产物 `dist/VidGrab-1.4.1-debug-universal.apk`（141,228,520 B，SHA-256 `EE29C4B4786772E1E0177A46071194697CCF55815B8D24D2792BCA20DFF8D85D`），versionCode 8 / 1.4.1，debug 签名，arm64-v8a + x86_64。
 
 
 ## 第 4 批「切页签不丢状态 + 公共目录全流程」真机验证（2026-11-08，vivo V2156A / Android 11 / arm64-v8a）
@@ -223,10 +305,12 @@
    - 若复制途中进程被杀，MediaStore 里可能留下不可见的 pending 条目（极小概率）
 
 ## 待办
-- [ ] 可选：更多 ABI（x86_64 模拟器）、代理设置、播放页专用解析规则
+- [ ] 配置 release 签名并分发（`keystore.properties` 仍未提供，当前只能用 debug 包验证）
+- [x] Android 15 dataSync 前台服务 6 小时上限（2026-11-14 已处理，待真机验证）
+- [ ] 可选：代理设置、播放页专用解析规则
 - [ ] 可选：yt-dlp 更新改为带版本预检（需找到手机可访问的版本接口）
+- [x] 内置 yt-dlp 升至 2026.10.26（2026-11-14，v1.3.1，真机验证）
 - [x] 切换页签保留页面/滚动/视频进度（2026-11-08 已修复并真机验证）
-- [ ] 配置 release 签名并分发（当前仍为 debug 签名；abiFilters 已含 arm64-v8a + x86_64）
 - [x] 许可证：已补 GPL-3.0 全文 `LICENSE`，README 增加指向
 
 ## 逆向结论摘要

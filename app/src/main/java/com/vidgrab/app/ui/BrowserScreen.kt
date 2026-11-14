@@ -1,13 +1,34 @@
 package com.vidgrab.app.ui
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.Dialog
+import android.app.DownloadManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
+import android.os.Message
+import android.view.Gravity
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,10 +51,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -48,19 +71,23 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -69,6 +96,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.webkit.WebViewCompat
@@ -77,14 +107,18 @@ import androidx.compose.ui.graphics.Color
 import com.vidgrab.app.PlayerActivity
 import com.vidgrab.app.core.AdBlocker
 import com.vidgrab.app.core.BrowserStore
+import com.vidgrab.app.core.CookieStore
 import com.vidgrab.app.core.BrowserViewModel
 import com.vidgrab.app.core.DetectedMedia
 import com.vidgrab.app.core.DetectionLogEntry
+import com.vidgrab.app.core.DirectDownloader
+import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.MediaSniffer
 import com.vidgrab.app.core.SiteSettings
 import com.vidgrab.app.ui.SniffChips
 import kotlinx.coroutines.delay
 import java.net.URI
+import java.net.URLDecoder
 
 const val HOME_URL = "https://cn.bing.com"
 
@@ -108,16 +142,43 @@ fun BrowserScreen(
     viewModel: BrowserViewModel = viewModel(),
     isActive: Boolean = true,
     onUrlChange: (String) -> Unit,
-    onDownload: (String, String?) -> Unit
+    onDownload: (url: String, title: String?, direct: Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val clipboard = LocalClipboardManager.current
+
+    // 网页 <input type=file> 的文件选择器
+    var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = fileChooserCallback
+        fileChooserCallback = null
+        if (callback == null) return@rememberLauncherForActivityResult
+        val uris: Array<Uri>? = when {
+            result.resultCode != Activity.RESULT_OK -> null
+            result.data?.clipData != null -> {
+                val clip = result.data!!.clipData!!
+                Array(clip.itemCount) { index -> clip.getItemAt(index).uri }
+            }
+            result.data?.data != null -> arrayOf(result.data!!.data!!)
+            else -> null
+        }
+        callback.onReceiveValue(uris)
+    }
+    val popupHost = remember(context) { PopupHost(context) }
+    var pageError by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(Unit) {
+        onDispose { popupHost.dismiss() }
+    }
 
     // 从 ViewModel 读取状态
     var address by remember { mutableStateOf(viewModel.currentUrl) }
     var addressField by remember { mutableStateOf(TextFieldValue(viewModel.currentUrl)) }
     var addressFocused by remember { mutableStateOf(false) }
     var showSheet by remember { mutableStateOf(false) }
+    var mediaFilter by remember { mutableStateOf("全部") }
     var sheet by remember { mutableStateOf(BrowserSheet.NONE) }
     var libraryTab by remember { mutableIntStateOf(0) }
     var showSiteDialog by remember { mutableStateOf(false) }
@@ -126,6 +187,25 @@ fun BrowserScreen(
     var settingsVersion by remember { mutableIntStateOf(0) }
 
     val pageState = remember { PageState().also { it.url = viewModel.currentUrl } }
+
+    // 离开浏览器页签时暂停网页媒体，回来只恢复之前正在播放的内容
+    LaunchedEffect(isActive) {
+        viewModel.setActive(isActive)
+    }
+    // App 切到后台时也暂停 WebView，避免网页继续出声
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val activeState = rememberUpdatedState(isActive)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> viewModel.setActive(false)
+                Lifecycle.Event.ON_START -> if (activeState.value) viewModel.setActive(true)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val detected by MediaSniffer.items.collectAsStateWithLifecycle()
     val logs by MediaSniffer.logs.collectAsStateWithLifecycle()
@@ -212,9 +292,10 @@ fun BrowserScreen(
         }
 
         // WebView - 使用 AndroidView 复用 ViewModel 中的 WebView 实例
-        AndroidView(
-            modifier = Modifier.weight(1f),
-            factory = { ctx ->
+        Box(modifier = Modifier.weight(1f)) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
                 // 首次创建 WebView 并交给 ViewModel 持有
                 val wv = WebView(ctx).apply {
                     settings.javaScriptEnabled = true
@@ -225,7 +306,9 @@ fun BrowserScreen(
                     settings.useWideViewPort = true
                     settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                     settings.javaScriptCanOpenWindowsAutomatically = false
-                    settings.setSupportMultipleWindows(false)
+                    // 允许多窗口：window.open / 第三方登录弹窗由 PopupHost 承载，
+                    // 不开启时登录授权弹窗会被直接吞掉。
+                    settings.setSupportMultipleWindows(true)
                     settings.userAgentString = settings.userAgentString +
                         " VidGrab/1.0"
                     pageState.userAgent = settings.userAgentString
@@ -269,6 +352,7 @@ fun BrowserScreen(
                     webViewClient = object : WebViewClient() {
                         override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                             super.onPageStarted(view, url, favicon)
+                            pageError = null
                             pageState.url = url
                             pageState.title = view.title
                             canGoBack = view.canGoBack()
@@ -306,7 +390,20 @@ fun BrowserScreen(
                             val target = request.url.toString()
                             val scheme = request.url.scheme?.lowercase()
                             if (request.isForMainFrame && scheme != "http" && scheme != "https") {
-                                MediaSniffer.log(MediaSniffer.SRC_ADBLOCK, target, "拦截外部跳转")
+                                // tel: / mailto: / intent:// 交给系统处理，不再静默吞掉
+                                val opened = openExternal(context, request.url)
+                                MediaSniffer.log(
+                                    MediaSniffer.SRC_INTERCEPT,
+                                    target,
+                                    if (opened) "交给外部应用打开" else "没有可打开该链接的应用"
+                                )
+                                if (!opened) {
+                                    Toast.makeText(
+                                        context,
+                                        "没有可打开该链接的应用",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
                                 return true
                             }
                             if (request.isForMainFrame && pageState.adBlock &&
@@ -323,6 +420,8 @@ fun BrowserScreen(
                             pageState.url = url
                             pageState.title = view.title
                             BrowserStore.addHistory(url, view.title)
+                            // 记下当前页面的登录 Cookie，粘贴该站链接时可直接复用
+                            CookieStore.rememberFromWebView(url)
                             view.evaluateJavascript(MediaSniffer.injectedJs, null)
                             address = url
                             if (!addressFocused) addressField = TextFieldValue(url)
@@ -331,6 +430,28 @@ fun BrowserScreen(
                             viewModel.updateUrl(url)
                             viewModel.updateTitle(view.title)
                             viewModel.updateCanGoBack(view.canGoBack())
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            error: WebResourceError
+                        ) {
+                            super.onReceivedError(view, request, error)
+                            if (request.isForMainFrame) {
+                                pageError = "${error.description}（错误码 ${error.errorCode}）"
+                            }
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView,
+                            request: WebResourceRequest,
+                            errorResponse: WebResourceResponse
+                        ) {
+                            super.onReceivedHttpError(view, request, errorResponse)
+                            if (request.isForMainFrame && errorResponse.statusCode >= 400) {
+                                pageError = "服务器返回 HTTP ${errorResponse.statusCode}"
+                            }
                         }
 
                         override fun doUpdateVisitedHistory(
@@ -342,6 +463,8 @@ fun BrowserScreen(
                             pageState.url = url
                             pageState.title = view.title
                             BrowserStore.addHistory(url, view.title)
+                            // 记下当前页面的登录 Cookie，粘贴该站链接时可直接复用
+                            CookieStore.rememberFromWebView(url)
                             address = url
                             if (!addressFocused) addressField = TextFieldValue(url)
                             onUrlChange(url)
@@ -351,13 +474,159 @@ fun BrowserScreen(
                             viewModel.updateCanGoBack(view.canGoBack())
                         }
                     }
+
+                    // 网页里点了“下载”后，WebView 默认什么都不做
+                    setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                        handleWebDownload(
+                            context = context,
+                            url = url,
+                            userAgent = userAgent ?: pageState.userAgent,
+                            contentDisposition = contentDisposition,
+                            mimeType = mimeType,
+                            onAppDownload = onDownload
+                        )
+                    }
+
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onShowFileChooser(
+                            webView: WebView?,
+                            callback: ValueCallback<Array<Uri>>?,
+                            params: FileChooserParams?
+                        ): Boolean {
+                            callback ?: return false
+                            fileChooserCallback?.onReceiveValue(null)
+                            fileChooserCallback = callback
+                            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                                addCategory(Intent.CATEGORY_OPENABLE)
+                                type = "*/*"
+                                putExtra(
+                                    Intent.EXTRA_ALLOW_MULTIPLE,
+                                    params?.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                                )
+                            }
+                            return runCatching {
+                                fileChooserLauncher.launch(intent)
+                                true
+                            }.getOrElse {
+                                fileChooserCallback = null
+                                false
+                            }
+                        }
+
+                        override fun onJsAlert(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: JsResult?
+                        ): Boolean {
+                            result ?: return false
+                            android.app.AlertDialog.Builder(view?.context ?: context)
+                                .setTitle(view?.title ?: "提示")
+                                .setMessage(message)
+                                .setPositiveButton("确定") { _, _ -> result.confirm() }
+                                .setOnCancelListener { result.cancel() }
+                                .show()
+                            return true
+                        }
+
+                        override fun onJsConfirm(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            result: JsResult?
+                        ): Boolean {
+                            result ?: return false
+                            android.app.AlertDialog.Builder(view?.context ?: context)
+                                .setTitle(view?.title ?: "请确认")
+                                .setMessage(message)
+                                .setPositiveButton("确定") { _, _ -> result.confirm() }
+                                .setNegativeButton("取消") { _, _ -> result.cancel() }
+                                .setOnCancelListener { result.cancel() }
+                                .show()
+                            return true
+                        }
+
+                        override fun onJsPrompt(
+                            view: WebView?,
+                            url: String?,
+                            message: String?,
+                            defaultValue: String?,
+                            result: JsPromptResult?
+                        ): Boolean {
+                            result ?: return false
+                            val input = EditText(view?.context ?: context).apply {
+                                setText(defaultValue.orEmpty())
+                                setSingleLine()
+                            }
+                            android.app.AlertDialog.Builder(view?.context ?: context)
+                                .setTitle(view?.title ?: "请输入")
+                                .setMessage(message)
+                                .setView(input)
+                                .setPositiveButton("确定") { _, _ ->
+                                    result.confirm(input.text?.toString().orEmpty())
+                                }
+                                .setNegativeButton("取消") { _, _ -> result.cancel() }
+                                .setOnCancelListener { result.cancel() }
+                                .show()
+                            return true
+                        }
+
+                        override fun onCreateWindow(
+                            view: WebView?,
+                            isDialog: Boolean,
+                            isUserGesture: Boolean,
+                            resultMsg: Message?
+                        ): Boolean {
+                            resultMsg ?: return false
+                            // 只接受用户点击触发的弹窗，避免广告自动弹
+                            if (!isUserGesture) return false
+                            val ua = pageState.userAgent.ifBlank {
+                                view?.settings?.userAgentString.orEmpty()
+                            }
+                            return runCatching {
+                                popupHost.show(resultMsg, ua) { uri -> openExternal(context, uri) }
+                            }.getOrElse {
+                                Toast.makeText(context, "无法打开弹窗", Toast.LENGTH_SHORT).show()
+                                false
+                            }
+                        }
+
+                        override fun onCloseWindow(window: WebView?) {
+                            popupHost.dismiss()
+                        }
+                    }
                     loadUrl(viewModel.currentUrl)
                     viewModel.initializeWebView(this)
                 }
                 wv
             },
-            update = { /* WebView 由 ViewModel 持有，不需要更新 */ }
-        )
+                update = { /* WebView 由 ViewModel 持有，不需要更新 */ }
+            )
+
+            pageError?.let { message ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("网页加载失败", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    TextButton(onClick = {
+                        pageError = null
+                        viewModel.reload()
+                    }) { Text("重新加载") }
+                }
+            }
+        }
 
         // 嗅探结果 FAB
         if (detected.isNotEmpty()) {
@@ -397,8 +666,35 @@ fun BrowserScreen(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("全部", "HLS", "DASH", "视频", "音频").forEach { label ->
+                        TextButton(
+                            onClick = { mediaFilter = label },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                label,
+                                color = if (mediaFilter == label) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+                val filtered = detected.filter { media ->
+                    when (mediaFilter) {
+                        "HLS" -> media.kind == "HLS"
+                        "DASH" -> media.kind == "DASH"
+                        "视频" -> media.kind == "VIDEO" || media.kind == "MP4"
+                        "音频" -> media.kind == "AUDIO" || media.kind == "M4A" || media.kind == "MP3"
+                        else -> true
+                    }
+                }
+                if (filtered.isEmpty()) {
+                    Text("暂无该类媒体。", style = MaterialTheme.typography.bodySmall)
+                }
                 LazyColumn(modifier = Modifier.fillMaxWidth().height(360.dp)) {
-                    items(detected) { media ->
+                    items(filtered) { media ->
                         DetectedRow(
                             media = media,
                             onPlay = {
@@ -407,8 +703,13 @@ fun BrowserScreen(
                             },
                             onDownload = {
                                 showSheet = false
-                                onDownload(media.url, media.pageTitle ?: pageState.title)
-                            }
+                                onDownload(media.url, media.pageTitle ?: pageState.title, false)
+                            },
+                            onCopy = {
+                                clipboard.setText(AnnotatedString(media.url))
+                                Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
+                            },
+                            onShare = { shareUrl(context, media.url) }
                         )
                         HorizontalDivider()
                     }
@@ -432,6 +733,19 @@ fun BrowserScreen(
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = { MediaSniffer.clearLogs() }) { Text("清空") }
+                    TextButton(onClick = {
+                        if (logs.isEmpty()) {
+                            Toast.makeText(context, "暂无日志", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val text = logs.joinToString("\n") { entry ->
+                                val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                                    .format(java.util.Date(entry.time))
+                                "$time [${entry.source}] ${entry.result} ${entry.url}"
+                            }
+                            clipboard.setText(AnnotatedString(text))
+                            Toast.makeText(context, "日志已复制", Toast.LENGTH_SHORT).show()
+                        }
+                    }) { Text("复制全部") }
                 }
                 Spacer(Modifier.height(8.dp))
                 if (logs.isEmpty()) {
@@ -680,7 +994,9 @@ private fun LibraryRow(
 private fun DetectedRow(
     media: DetectedMedia,
     onPlay: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onCopy: () -> Unit,
+    onShare: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -711,6 +1027,22 @@ private fun DetectedRow(
         }
         TextButton(onClick = onPlay) { Text("播放") }
         TextButton(onClick = onDownload) { Text("解析") }
+        IconButton(onClick = onCopy) {
+            Icon(Icons.Default.ContentCopy, contentDescription = "复制链接")
+        }
+        IconButton(onClick = onShare) {
+            Icon(Icons.Default.Share, contentDescription = "分享链接")
+        }
+    }
+}
+
+private fun shareUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, url)
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(intent, "分享链接").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 
@@ -750,4 +1082,185 @@ private fun normalizeUrl(input: String): String {
     if (trimmed.isEmpty()) return HOME_URL
     return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed
     else "https://$trimmed"
+}
+
+private val WEB_MEDIA_EXTENSIONS = setOf(
+    "mp4", "webm", "mkv", "mov", "m4v", "flv", "ts",
+    "m4a", "mp3", "aac", "ogg", "opus", "wav"
+)
+
+/**
+ * 网页触发下载（Content-Disposition 附件、直接点视频文件）：
+ * 媒体文件转到 App 的下载页；其它文件交给系统下载器。
+ */
+private fun handleWebDownload(
+    context: Context,
+    url: String,
+    userAgent: String?,
+    contentDisposition: String?,
+    mimeType: String?,
+    onAppDownload: (String, String?, Boolean) -> Unit
+) {
+    val rawName = fileNameFromDisposition(contentDisposition)
+        ?: url.substringBefore('?').substringAfterLast('/').let { segment ->
+            runCatching { URLDecoder.decode(segment, "UTF-8") }.getOrDefault(segment)
+        }
+    val name = FileNames.publicFileName(rawName.ifBlank { "video" })
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val isMedia = mimeType?.startsWith("video/") == true ||
+        mimeType?.startsWith("audio/") == true ||
+        ext in WEB_MEDIA_EXTENSIONS ||
+        DirectDownloader.isDirectMediaUrl(url)
+
+    if (isMedia) {
+        val title = FileNames.clean(name.substringBeforeLast('.', name)).ifBlank { null }
+        Toast.makeText(context, "已转到下载页", Toast.LENGTH_SHORT).show()
+        onAppDownload(url, title, true)
+        return
+    }
+
+    // 非媒体（zip/pdf 等）走系统下载器，不把 yt-dlp 当通用下载器
+    val request = DownloadManager.Request(Uri.parse(url)).apply {
+        setTitle(name)
+        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "VidGrab/$name")
+        userAgent?.takeIf { it.isNotBlank() }?.let { addRequestHeader("User-Agent", it) }
+        runCatching { CookieManager.getInstance().getCookie(url) }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { addRequestHeader("Cookie", it) }
+    }
+    val queued = runCatching {
+        context.getSystemService(DownloadManager::class.java)?.enqueue(request)
+    }.getOrNull()
+    Toast.makeText(
+        context,
+        if (queued != null) "已交给系统下载：$name" else "无法交给系统下载",
+        Toast.LENGTH_SHORT
+    ).show()
+}
+
+private fun fileNameFromDisposition(disposition: String?): String? {
+    if (disposition.isNullOrBlank()) return null
+    val encoded = Regex("""filename\*=([^;]+)""", RegexOption.IGNORE_CASE)
+        .find(disposition)?.groupValues?.get(1)?.trim()?.trim('"')
+    if (!encoded.isNullOrBlank()) {
+        val value = encoded.substringAfter("''", encoded)
+        return runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+    }
+    return Regex("""filename=([^;]+)""", RegexOption.IGNORE_CASE)
+        .find(disposition)?.groupValues?.get(1)?.trim()?.trim('"')
+}
+
+/** 交给系统打开 tel:/mailto:/intent:// 等外部链接；没有应用可处理时返回 false。 */
+private fun openExternal(context: Context, uri: Uri): Boolean {
+    val intent = if (uri.scheme?.lowercase() == "intent") {
+        runCatching { Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME) }.getOrNull()
+            ?: return false
+    } else {
+        Intent(Intent.ACTION_VIEW, uri)
+    }
+    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    return runCatching {
+        context.startActivity(intent)
+        true
+    }.getOrDefault(false)
+}
+
+/**
+ * window.open / target=_blank 的弹窗宿主：一个独立 WebView 的 Dialog。
+ * 与主 WebView 共享 CookieManager，第三方登录完成后 Cookie 会写回主页面。
+ */
+private class PopupHost(private val context: Context) {
+
+    private var dialog: Dialog? = null
+    private var webView: WebView? = null
+
+    fun dismiss() {
+        val current = dialog
+        dialog = null
+        runCatching { current?.dismiss() }
+        runCatching { webView?.destroy() }
+        webView = null
+    }
+
+    fun show(resultMsg: Message, userAgent: String, onExternal: (Uri) -> Boolean): Boolean {
+        dismiss()
+        val popup = WebView(context).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            settings.setSupportMultipleWindows(false)
+            if (userAgent.isNotBlank()) settings.userAgentString = userAgent
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean {
+                    val scheme = request.url.scheme?.lowercase()
+                    if (scheme != "http" && scheme != "https") {
+                        onExternal(request.url)
+                        return true
+                    }
+                    return false
+                }
+            }
+            webChromeClient = object : WebChromeClient() {
+                override fun onCloseWindow(window: WebView?) {
+                    dismiss()
+                }
+            }
+        }
+        val close = TextView(context).apply {
+            text = "关闭 ✕"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            setPadding(36, 28, 36, 28)
+            setBackgroundColor(0xCC000000.toInt())
+            setOnClickListener { dismiss() }
+        }
+        val container = FrameLayout(context).apply {
+            setBackgroundColor(android.graphics.Color.WHITE)
+            addView(
+                popup,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            addView(
+                close,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END
+                )
+            )
+        }
+        val popupDialog = Dialog(
+            context,
+            android.R.style.Theme_DeviceDefault_Light_NoActionBar
+        ).apply {
+            setContentView(
+                container,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+            setOnDismissListener {
+                runCatching { popup.destroy() }
+                if (webView === popup) webView = null
+                if (dialog === this) dialog = null
+            }
+        }
+        dialog = popupDialog
+        webView = popup
+        popupDialog.show()
+        (resultMsg.obj as? WebView.WebViewTransport)?.webView = popup
+        resultMsg.sendToTarget()
+        return true
+    }
 }
