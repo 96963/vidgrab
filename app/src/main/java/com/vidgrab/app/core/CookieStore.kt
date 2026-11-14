@@ -53,12 +53,18 @@ object CookieStore {
         return byHost[host]
     }
 
-    /** 合并嗅探请求头 + 浏览器 Cookie + 默认 UA。 */
-    fun headersFor(url: String): Map<String, String> {
+    /**
+     * 合并嗅探请求头 + 浏览器 Cookie + 默认 UA。
+     * yt-dlp 走 [includeDefaultUserAgent] = false：它自带的桌面 UA 才能让 B 站等站点正常
+     * 走站点解析器；强行注入移动 UA 会让 m 站页面退回 generic，只识别出 html。
+     */
+    fun headersFor(url: String, includeDefaultUserAgent: Boolean = true): Map<String, String> {
         val headers = MediaSniffer.headersFor(url).toMutableMap()
         val cookie = cookieFor(url)
         if (!cookie.isNullOrBlank()) headers["Cookie"] = cookie
-        if (headers["User-Agent"].isNullOrBlank()) headers["User-Agent"] = DEFAULT_UA
+        if (includeDefaultUserAgent && headers["User-Agent"].isNullOrBlank()) {
+            headers["User-Agent"] = DEFAULT_UA
+        }
         return headers
     }
 

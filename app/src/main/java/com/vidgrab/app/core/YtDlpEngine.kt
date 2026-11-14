@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.URI
 
 /**
  * yt-dlp 引擎封装：负责初始化 Python/FFmpeg、解析链接信息、执行下载。
@@ -48,16 +49,31 @@ object YtDlpEngine {
         }
     }
 
+    /** B 站移动页在 yt-dlp 下容易退回 generic；统一改用桌面规范地址。 */
+    private fun normalizeUrl(url: String): String {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return url
+        val host = uri.host?.lowercase() ?: return url
+        val path = uri.path ?: return url
+        if ((host == "m.bilibili.com" || host == "bilibili.com") &&
+            path.startsWith("/video/")
+        ) {
+            val query = uri.rawQuery?.let { "?$it" } ?: ""
+            return "https://www.bilibili.com$path$query"
+        }
+        return url
+    }
+
     /** 播放列表展开：--flat-playlist 只取条目，不解析每个视频的格式。 */
     suspend fun fetchPlaylistEntries(context: Context, url: String): List<Pair<String, String>> =
         withContext(Dispatchers.IO) {
             ensureReady(context)
-            val request = YoutubeDLRequest(url)
+            val target = normalizeUrl(url)
+            val request = YoutubeDLRequest(target)
                 .addOption("--flat-playlist")
                 .addOption("--dump-json")
                 .addOption("--no-warnings")
                 .addOption("--socket-timeout", "15")
-            request.addDetectedHeaders(url)
+            request.addDetectedHeaders(target)
             val response = YoutubeDL.getInstance().execute(request)
             val mapper = ObjectMapper()
             val roots = response.out.lineSequence()
@@ -85,11 +101,12 @@ object YtDlpEngine {
     /** 解析链接，返回标题、缩略图和可选格式列表。 */
     suspend fun fetchInfo(context: Context, url: String): MediaInfo = withContext(Dispatchers.IO) {
         ensureReady(context)
-        val request = YoutubeDLRequest(url)
+        val target = normalizeUrl(url)
+        val request = YoutubeDLRequest(target)
             .addOption("--no-playlist")
             .addOption("--no-warnings")
             .addOption("--socket-timeout", "15")
-        request.addDetectedHeaders(url)
+        request.addDetectedHeaders(target)
         val info = try {
             YoutubeDL.getInstance().getInfo(request)
         } catch (e: YoutubeDLException) {
@@ -128,7 +145,7 @@ object YtDlpEngine {
             uploader = info.uploader,
             durationSeconds = info.duration,
             thumbnail = info.thumbnail ?: info.thumbnails?.lastOrNull()?.url,
-            webpageUrl = info.webpageUrl ?: url,
+            webpageUrl = normalizeUrl(info.webpageUrl ?: url),
             formats = buildFormats(info.formats ?: emptyList())
         )
     }
@@ -139,9 +156,11 @@ object YtDlpEngine {
         return !path.endsWith(".m3u8") && !path.endsWith(".mpd")
     }
 
-    /** 浏览器 Cookie（按域名复用）+ 嗅探到的 Referer/UA，直链和 yt-dlp 都带上。 */
+    /** 浏览器 Cookie（按域名复用）+ 嗅探到的 Referer/UA，直链和 yt-dlp 都带上。
+     *  yt-dlp 不注入 App 的移动 UA，避免 B 站等站点退回 generic 解析。
+     */
     private fun YoutubeDLRequest.addDetectedHeaders(url: String): YoutubeDLRequest {
-        CookieStore.headersFor(url).forEach { (name, value) ->
+        CookieStore.headersFor(url, includeDefaultUserAgent = false).forEach { (name, value) ->
             if (name.isNotBlank() && value.isNotBlank()) {
                 addOption("--add-header", "$name: $value")
             }
@@ -222,15 +241,16 @@ object YtDlpEngine {
         ensureReady(context)
         val dir = outputDir(context)
         val before = dir.listFiles()?.map { it.name }?.toHashSet() ?: HashSet()
-        val useAria2c = DownloadSettings.aria2c && aria2cReady && canUseAria2c(task.url)
+        val target = normalizeUrl(task.url)
+        val useAria2c = DownloadSettings.aria2c && aria2cReady && canUseAria2c(target)
         val produced = try {
-            runDownload(task, dir, before, useAria2c, onProgress, onFile)
+            runDownload(task, target, dir, before, useAria2c, onProgress, onFile)
         } catch (e: YoutubeDL.CanceledException) {
             throw e
         } catch (e: Throwable) {
             // aria2c 不可用或站点不接受时，退回内置下载器重试一次
             if (!useAria2c) throw e
-            runDownload(task, dir, before, false, onProgress, onFile)
+            runDownload(task, target, dir, before, false, onProgress, onFile)
         }
         val result = renameToTitle(produced, task.title, task.url)
         publishExtras(context, dir, before, result)
@@ -251,13 +271,14 @@ object YtDlpEngine {
 
     private fun runDownload(
         task: DownloadTask,
+        url: String,
         dir: File,
         before: Set<String>,
         useAria2c: Boolean,
         onProgress: (Float, String, String) -> Unit,
         onFile: (String) -> Unit
     ): File? {
-        val request = YoutubeDLRequest(task.url)
+        val request = YoutubeDLRequest(url)
             .addOption("--newline")
             .addOption("--no-mtime")
             .addOption("--no-playlist")
@@ -287,7 +308,7 @@ object YtDlpEngine {
         if (useAria2c) {
             request.addOption("--downloader", "libaria2c.so")
         }
-        request.addDetectedHeaders(task.url)
+        request.addDetectedHeaders(url)
 
         if (task.audioOnly) {
             request.addOption("-x")

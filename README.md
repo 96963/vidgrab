@@ -4,7 +4,7 @@
 
 介绍页：https://soft-hall-6e48.gjvgfffgh3.workers.dev/
 
-当前版本：1.4.2（versionCode 9，debug 包；P1 为 1.4.0/7，P2 为 1.4.1/8，1.4.2 修复浏览器切页播放问题）
+当前版本：1.4.3（versionCode 10，debug 包；P1 为 1.4.0/7，P2 为 1.4.1/8，1.4.2 修复浏览器切页播放问题，1.4.3 修复 B 站页面解析与合并下载）
 
 ## 功能
 

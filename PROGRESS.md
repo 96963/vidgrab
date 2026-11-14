@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-14（当前版本 1.4.2 / versionCode 9；P1/P2 已在 vivo V2156A 真机验收，1.4.2 修复浏览器切页播放问题）
+更新：2026-11-14（当前版本 1.4.3 / versionCode 10；P1/P2 已在 vivo V2156A 真机验收，1.4.2 修复浏览器切页播放问题，1.4.3 修复 B 站移动 UA 导致的解析失败）
 
 ## 目标
 逆向 Seal 与 SuperX 两个 Android 下载器，做一个自己的 Android 下载 App。
@@ -156,6 +156,30 @@
 - 说明：这是“切页不断播”方案，不是“切页暂停再自动恢复”；若后续需要离开页签静音/暂停，需要换成用户手势触发的恢复入口，WebView 自动 `play()` 在真机上不可靠
 
 构建：`assembleDebug` BUILD SUCCESSFUL（22s）；产物 `dist/VidGrab-1.4.2-debug-universal.apk`（141,229,104 B，SHA-256 `D4ED27B0080D633C607D7FC049651718FC58FCBC10D3B04879B5F8C1DC342E6B`），versionCode 9 / 1.4.2，debug 签名，arm64-v8a + x86_64；已安装到 vivo 验证。
+
+
+## 第 10 批 P1 修复（2026-11-14，v1.4.3 / versionCode 10）
+
+问题：B 站页面地址下载报 `ERROR: The extracted extension ('html') is unusual...`。原因是 App 给 yt-dlp 强制注入了 WebView 的移动端 UA，且 B 站页面被规范成 `m.bilibili.com`；移动 UA 下 m 站返回移动页，yt-dlp 退回 generic，只识别出一个 html 格式。PC 用 yt-dlp 默认桌面 UA 解析同一地址正常。
+
+修复：
+
+- [x] `CookieStore.headersFor(url, includeDefaultUserAgent)` 增加开关；yt-dlp 调用时不再注入 App 的移动 UA，直链下载/播放器仍保留移动 UA
+- [x] `YtDlpEngine.normalizeUrl()`：把 `m.bilibili.com/video/...`、`bilibili.com/video/...` 统一成 `www.bilibili.com/video/...`；解析、播放列表展开、下载和写入任务的 `webpageUrl` 都走这个规范地址
+- [x] 下载任务仍保留用户输入的原始 URL，失败重试时由引擎内部规范，不用迁移旧任务数据
+
+真机验证（vivo V2156A / Android 11）：
+
+- [x] `BV1v4Wr6uEoG` 解析成功：真实标题、UP 主「大圆镜科普」、时长 `06:27`、封面，以及 `1920p 74.4 MB / 1280p 35.6 MB / 852p 20.1 MB / 640p 13.4 MB` 四档格式；任务 URL 已是 `https://www.bilibili.com/video/BV1v4Wr6uEoG`
+- [x] 最佳画质（自动合并）下载完成：视频轨 `30,894,926 B` + 音频轨 `4,917,315 B`，合并后 `36,757,053 B`，发布为 `Download/VidGrab/怪诞虫：一只看起来活不过三天的动物，真的存在过？.mp4`；拉回文件解析 MP4 box，确认同时含 `vide` 与 `soun` 两条轨道
+- [x] 61 秒短测试 `BV1BjWq68Ee2` 合并完成：`4,170,044 B`，同样确认 `vide + soun` 双轨，说明不是单个视频的偶然
+- [x] 暂停/继续：长任务 87% 时暂停，任务变 `PAUSED`；继续后从 `.part` 继续，最终完成。B 站 CDN 在 96% 尾部出现限速（约 3–6 KiB/s），随后一次 `网络连接失败或超时`，点重试后完成；属于 CDN 侧限速/断连，下载器已保留 `.part`
+- [x] 浏览器路径回归：在 1.4.2 上从 B 站播放器嗅探到 360P CDN 直链并跳到下载页，完成 `17,497,778 B` 的 video-only MP4；1.4.3 的页面地址下载则会自动合并音轨
+- [x] 封面：临时目录生成 `怪诞虫…jpg`（139,205 B）；`BV12oWi6VEz7` 生成封面 `1,974,215 B`。B 站这些源没有 CC 字幕轨，勾选字幕后不会产出 srt，和预期一致
+- 已知边角：若重试前封面 jpg 已存在于临时目录，`publishExtras` 的 `before` 过滤会把它当成旧文件跳过，公共目录拿不到封面；新任务首次下载不受影响，后续可单独修
+- 已知展示问题：暂停后继续，yt-dlp 回调会先把进度重置到 0 再继续上涨；`.part` 没丢，最终成品正常
+
+构建：`assembleDebug` BUILD SUCCESSFUL（30s）；产物 `dist/VidGrab-1.4.3-debug-universal.apk`（141,228,060 B，SHA-256 `C19C2D1DCC02E55D730743FDC695A03F62297A12F7675C4185817A8C10856429`），versionCode 10 / 1.4.3，debug 签名，arm64-v8a + x86_64；已安装到 vivo 验证。
 
 
 ## 第 4 批「切页签不丢状态 + 公共目录全流程」真机验证（2026-11-08，vivo V2156A / Android 11 / arm64-v8a）
