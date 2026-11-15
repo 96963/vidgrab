@@ -14,15 +14,15 @@
 - [ ] 重新连接手机，确认 `adb devices -l` 能看到 `35059217030026B`
 - [ ] 确认已安装版本仍是 `versionCode=10 / versionName=1.4.3`；如果重装过，先核对
 - [ ] 需要浏览器/本地测试源时，启动 `E:\claude\REA\.tools\vidgrab-web\server.py`，并执行 `adb reverse tcp:8765 tcp:8765`
-- 手机当前默认输入法仍是 `org.fcitx.fcitx5.android/.input.FcitxInputMethodService`；如果键盘再次透明/弹不出来，临时切到 vivo 输入法，不要改 App 代码
+- 手机输入法已切到 vivo（`com.vivo.ai.ime/.main.IMEService`，2026-11-15 上午）；Fcitx5 仍在设备上但不再默认。ADB `input text` 在 Fcitx5 下会被拼音组合改写，若键盘异常先确认默认输入法是 vivo
 
 ---
 
 ## 1. 建议的明天顺序
 
-1. P1 通知栏暂停/继续按钮真实点击
-2. P1 批量/播放列表真实入队
-3. P1 SAF 保存目录
+1. P1 通知栏暂停/继续按钮真实点击（已验）
+2. P1 批量/播放列表真实入队（批量已验，播放列表待验）
+3. P1 SAF 保存目录（已验）
 4. 1.4.3 回归：无暂停完整下载 + 失败自动重试/封面幂等
 5. P2 剩余四项：亮度值、断点续播、崩溃日志、嗅探复制/分享
 6. 决定 1.4.2「切页不断播」是否接受
@@ -48,10 +48,13 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
   - 播放列表自动展开：还没验，可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL 验证
   - 批量弹窗内按钮文案：开始下载（解析中变“处理中…”），空输入时按钮置灰
 
-- [ ] **SAF 保存目录未完成**
-  - vivo DocumentsUI 里根目录提示“无法使用此文件夹”；选 `Download` 后“使用这个文件夹”按钮不亮
-  - 未验证：`OpenDocumentTree` 返回 URI、持久化权限、`DownloadSettings.saveTreeUri`、`PublicStorage.publishToTree` 写入和删除私有源文件
-  - 可尝试：改选 `Download/VidGrab` 子目录；或换系统文件选择器/第三方文件管理器；仍不行则记录为 vivo 系统限制，保留 MediaStore 默认路径
+- [x] **SAF 保存目录（2026-11-15 真机通过）**
+  - vivo DocumentsUI 限制：内部存储根目录和 `Download` 根被 vivo 拦截，显示“无法使用此文件夹”（系统限制，非 App 问题）；选「视频」根（`primary:视频`，物理映射 `/sdcard/视频`）成功，返回 tree URI 并持久化 `save_tree_uri`
+  - SAF 落盘：`real.mp4` 下载 DONE，`filePath=content://com.android.externalstorage.documents/tree/primary:视频/document/primary:视频/127.0.0.1 20261115-0831.mp4`，物理文件 71,568 B 出现在 `/sdcard/视频/`
+  - SAF 删除：任务页删除（“同时删除文件”默认勾选）→ `DocumentsContract.deleteDocument` 生效，文件从 `/sdcard/视频/` 消失
+  - 「恢复默认」→ `save_tree_uri` 清空，回到 `Download/VidGrab`
+  - 小问题：SAF 位置下任务卡片仍显示「Download/VidGrab/文件名」前缀（显示层硬编码），不影响功能，1.4.4 可改成显示实际目录名
+  - ⚠ 事故记录：测试期间（08:25）vivo 文件管理把 `/sdcard/视频/RJ01137048`（用户数据目录，含 `LOI-01`）移入回收站（`fm_recycle.db` 当日唯一新条目）；已从回收站移回原位并核对内容完好。回收站界面可能残留一条幽灵记录。原因未完全定位，疑似 DocumentsUI 期间连续滑动手势误触发；教训：vivo DocumentsUI 里不要快速连续 swipe，SAF 测试后核对 `/sdcard/视频/` 与 `.vivoFileRecycleBin/`
 
 - [ ] **字幕链路缺可验证源**
   - 本地测试源无字幕轨；B 站 `BV1v4Wr6uEoG` 等候选 `x/player/v2` 返回 `subs=0`，没有 CC 字幕

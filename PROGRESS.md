@@ -121,7 +121,9 @@
   - [x] 通知栏：任务通知 actions=2（暂停/取消），服务通知存在；PendingIntent 已确认
   - [x] 通知栏按钮手动点击（2026-11-15 补验，1.4.3）：展开通知点「暂停」→ `PAUSED` + warning `已暂停` + `.part` 停止增长（5,729,092 B），按钮变「继续」；点「继续」→ `DOWNLOADING`；点「取消」→ `CANCELED`、任务通知清除、`.part` 保留
   - [x] 批量多链接真实入队（2026-11-15 补验，1.4.3）：切到 vivo 输入法后 ADB 输入正常；两条本地直链经「批量下载多个链接 / 播放列表」弹窗入队，拆成 2 个任务（`createdAt` 相差 123ms，同时启动），均 `DONE`：69.9 KB + 545.4 KB，同名自动加「 (1)」后缀不互相覆盖；MP4 解析确认（本地源无音轨，仅 vide+meta）
-  - 限制/未完成：播放列表自动展开未验证（可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL）；SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；本地源无字幕轨，字幕/封面只验证勾选项与任务字段（B 站封面发布已在 1.4.3 验证）
+  - [x] SAF 保存目录（2026-11-15 补验，1.4.3）：vivo DocumentsUI 对内部存储根/`Download` 根拦截「无法使用此文件夹」（系统限制）；选「视频」根成功并持久化 `save_tree_uri`；`real.mp4` 经 SAF 写入 `/sdcard/视频/127.0.0.1 20261115-0831.mp4`（71,568 B，`filePath` 为 tree/document URI），任务 DONE；任务页「同时删除文件」（默认勾选）删除任务后文件同步消失；「恢复默认」清空 `save_tree_uri` 回到 `Download/VidGrab`
+  - 限制/未完成：播放列表自动展开未验证（可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL）；SAF 位置下任务卡片仍显示「Download/VidGrab」前缀（显示层小问题）；本地源无字幕轨，字幕/封面只验证勾选项与任务字段（B 站封面发布已在 1.4.3 验证）
+  - ⚠ 事故：SAF 测试期间 vivo 文件管理将用户目录 `/sdcard/视频/RJ01137048` 移入回收站（当日唯一新条目），已从回收站移回原位并核对完好；回收站界面可能残留幽灵记录。教训：vivo DocumentsUI 内避免快速连续 swipe，SAF 测试后核对 `/sdcard/视频/` 与 `.vivoFileRecycleBin/`
   - 教训：ADB `input text` 在 Fcitx5 下会被拼音组合改写（`aaa%nbbb` → “啊啊啊%”），ADB 输入前先 `ime set com.vivo.ai.ime/.main.IMEService`
 
 构建：`assembleDebug` BUILD SUCCESSFUL（31s）；产物 `dist/VidGrab-1.4.0-debug-universal.apk`（141,201,416 B，SHA-256 `13EC57510FE87C9705B4E96408E222AB333736CE7C462B78D70215611C39DE3A`），versionCode 7 / 1.4.0，debug 签名，arm64-v8a + x86_64。
