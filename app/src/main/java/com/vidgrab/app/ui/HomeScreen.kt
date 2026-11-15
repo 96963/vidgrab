@@ -727,6 +727,15 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .height(44.dp)
                 ) { Text("反馈 / 导出崩溃日志") }
+                if (com.vidgrab.app.BuildConfig.DEBUG) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            // 仅 debug 包可见：用于真机验证崩溃捕获链路
+                            throw RuntimeException("VidGrab 测试崩溃（debug）")
+                        }
+                    ) { Text("模拟崩溃（仅 debug）") }
+                }
                 Spacer(Modifier.height(24.dp))
             }
         }
