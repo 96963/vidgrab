@@ -19,7 +19,13 @@ android {
         versionCode = 28
         versionName = "1.4.21"
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // 默认带 x86_64 方便模拟器；发布单 ABI 包时用 -Pabi=arm64-v8a 覆盖
+            val abiOverride = (project.findProperty("abi") as String?)?.trim()
+            if (abiOverride.isNullOrEmpty()) {
+                abiFilters += listOf("arm64-v8a", "x86_64")
+            } else {
+                abiFilters += abiOverride
+            }
         }
     }
 
