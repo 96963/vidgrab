@@ -244,13 +244,13 @@ object DownloadManager {
                 state = TaskState.DOWNLOADING,
                 error = null,
                 warning = null,
-                progress = 0f,
                 speed = "",
                 eta = ""
             )
         }
         notifyProgress(task.id, force = true)
-        var shownProgress = 0f
+        // 续传时进度从已有值继续，不能归零（暂停→继续、自动重试都走这里）
+        var shownProgress = task.progress
         try {
             val produced = YtDlpEngine.download(
                 appContext,

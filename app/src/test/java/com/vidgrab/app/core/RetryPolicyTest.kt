@@ -27,6 +27,18 @@ class RetryPolicyTest {
     }
 
     @Test
+    fun streamCutMidwayIsRetryable() {
+        // 真机实测：慢速源被掐断后 DirectDownloader 报的就是这句
+        assertTrue(
+            RetryPolicy.isRetryableNetworkError("多线程下载失败：unexpected end of stream")
+        )
+        assertTrue(RetryPolicy.isRetryableNetworkError("unexpected end of stream on okhttp3"))
+        assertTrue(RetryPolicy.isRetryableNetworkError("java.io.EOFException: \\n not found"))
+        assertTrue(RetryPolicy.isRetryableNetworkError("Socket closed"))
+        assertTrue(RetryPolicy.isRetryableNetworkError("Connection closed by peer"))
+    }
+
+    @Test
     fun serverErrorsAreRetryable() {
         assertTrue(RetryPolicy.isRetryableNetworkError("HTTP Error 502: Bad Gateway"))
         assertTrue(RetryPolicy.isRetryableNetworkError("HTTP Error 503: Service Unavailable"))

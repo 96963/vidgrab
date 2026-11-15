@@ -21,10 +21,13 @@ object RetryPolicy {
     fun isRetryableNetworkError(raw: String?): Boolean {
         val text = raw?.lowercase().orEmpty()
         if (text.isBlank()) return false
+        // OkHttp 断流报 EOFException，消息里常夹带 "\n not found"，别被当成 404 业务错误
+        if (text.contains("eofexception")) return true
         val networkSignals = listOf(
             "timed out", "timeout", "connection reset", "connection aborted",
             "connection refused", "network is unreachable", "failed to resolve",
-            "temporary failure", "remote end closed", "incomplete",
+            "temporary failure", "remote end closed", "unexpected end of stream",
+            "eof", "socket closed", "connection closed", "incomplete",
             "broken pipe", "ssl", "handshake"
         )
         val looksNetwork = networkSignals.any { text.contains(it) } ||

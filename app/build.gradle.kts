@@ -16,8 +16,8 @@ android {
         applicationId = "com.vidgrab.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 41
-        versionName = "1.4.34"
+        versionCode = 44
+        versionName = "1.4.37"
         ndk {
             // 默认带 x86_64 方便模拟器；发布单 ABI 包时用 -Pabi=arm64-v8a 覆盖
             val abiOverride = (project.findProperty("abi") as String?)?.trim()
