@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,12 +27,15 @@ object DownloadManager {
 
     private const val SAVE_INTERVAL_MS = 2000L
     private const val WIFI_WAIT = "仅 Wi-Fi 下载已开启，等待 Wi-Fi"
+    private const val MAX_AUTO_RETRY = 3
+    private val AUTO_RETRY_BACKOFF = longArrayOf(3000L, 8000L, 20000L)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var gate = Semaphore(DownloadSettings.concurrent)
     private val jobs = ConcurrentHashMap<String, Job>()
+    private val autoRetryCount = ConcurrentHashMap<String, Int>()
 
     private val _tasks = MutableStateFlow<List<DownloadTask>>(emptyList())
     val tasks: StateFlow<List<DownloadTask>> = _tasks.asStateFlow()
@@ -138,6 +142,7 @@ object DownloadManager {
     fun retry(id: String) {
         val current = _tasks.value.firstOrNull { it.id == id } ?: return
         if (current.state != TaskState.ERROR && current.state != TaskState.CANCELED) return
+        autoRetryCount.remove(id)
         val reset = current.copy(
             state = TaskState.QUEUED,
             progress = 0f,
@@ -212,6 +217,32 @@ object DownloadManager {
             maybeStopService()
         }
         jobs[task.id] = job
+    }
+
+    /**
+     * 只把「网络层中断」算作可自动重试：超时、连接重置/拒绝、读流中断、5xx。
+     * 403/404、需要登录、解析失败、地区限制一律不重试，直接报给用户。
+     */
+    private fun isRetryableNetwork(raw: String?): Boolean {
+        val text = raw?.lowercase().orEmpty()
+        if (text.isBlank()) return false
+        val networkSignals = listOf(
+            "timed out", "timeout", "connection reset", "connection aborted",
+            "connection refused", "network is unreachable", "failed to resolve",
+            "temporary failure", "remote end closed", "incomplete read",
+            "broken pipe", "ssl", "handshake"
+        )
+        val looksNetwork = networkSignals.any { text.contains(it) } ||
+            Regex("http error 5\\d\\d").containsMatchIn(text) ||
+            text.contains("500 internal")
+        if (!looksNetwork) return false
+        val fatalSignals = listOf(
+            "http error 403", "http error 404", "forbidden", "not found",
+            "sign in", "log in", "login required", "private video", "members-only",
+            "unsupported url", "unable to extract", "no video formats", "geo",
+            "not available in your country", "copyright"
+        )
+        return fatalSignals.none { text.contains(it) }
     }
 
     /**
@@ -314,6 +345,7 @@ object DownloadManager {
                 )
             }
             Notifications.showDone(appContext, task.id, finishedTitle, warning)
+            autoRetryCount.remove(task.id)
         } catch (e: YoutubeDL.CanceledException) {
             if (stateOf(task.id) == TaskState.PAUSED) {
                 Notifications.showTask(appContext, _tasks.value.firstOrNull { it.id == task.id } ?: task)
@@ -335,6 +367,38 @@ object DownloadManager {
             // 前台服务超时等主动中止场景已写好错误信息，不要被 "Job was cancelled" 覆盖
             if (state == TaskState.ERROR && e is java.util.concurrent.CancellationException) return
             val friendly = ErrorMessages.describe(e.message)
+            // 网络类中断（超时/连接重置/5xx）自动退避重试，避免 B 站尾段限速还得用户手动点
+            val attempt = autoRetryCount[task.id] ?: 0
+            if (state == TaskState.DOWNLOADING &&
+                attempt < MAX_AUTO_RETRY &&
+                isRetryableNetwork(e.message)
+            ) {
+                autoRetryCount[task.id] = attempt + 1
+                val waitMs = AUTO_RETRY_BACKOFF[attempt.coerceAtMost(AUTO_RETRY_BACKOFF.lastIndex)]
+                update(task.id) {
+                    it.copy(
+                        state = TaskState.QUEUED,
+                        warning = "网络中断，自动重试 ${attempt + 1}/$MAX_AUTO_RETRY",
+                        error = null,
+                        speed = "",
+                        eta = ""
+                    )
+                }
+                persist()
+                DiagLog.w(
+                    "Download",
+                    "auto retry ${attempt + 1}/$MAX_AUTO_RETRY in ${waitMs}ms: ${e.message?.take(120)}"
+                )
+                scope.launch {
+                    delay(waitMs)
+                    val now = _tasks.value.firstOrNull { it.id == task.id }
+                    if (now != null && now.state == TaskState.QUEUED) {
+                        DownloadService.start(appContext)
+                        schedule(now)
+                    }
+                }
+                return
+            }
             update(task.id) {
                 it.copy(
                     state = TaskState.ERROR,
@@ -398,6 +462,7 @@ object DownloadManager {
 
     /** 删除任务；deleteFile 为 true 时连同下载的文件与 .part 续传文件一起删除。 */
     fun remove(id: String, deleteFile: Boolean = false) {
+        autoRetryCount.remove(id)
         val task = _tasks.value.firstOrNull { it.id == id } ?: return
         if (task.state == TaskState.QUEUED || task.state == TaskState.DOWNLOADING) {
             cancel(id)
