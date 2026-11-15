@@ -249,6 +249,30 @@ object PublicStorage {
 
     fun exists(context: Context, ref: String): Boolean = info(context, ref) != null
 
+    /**
+     * 公共下载目录里是否已有同名文件。附加文件（封面/字幕）重试发布时用它做幂等，
+     * 避免同一张封面在公共目录堆成「xxx.jpg」「xxx (1).jpg」。
+     */
+    fun hasFileNamed(context: Context, name: String): Boolean {
+        if (name.isBlank()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ? AND " +
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ?"
+            val args = arrayOf("$RELATIVE_PATH/", name)
+            return runCatching {
+                context.contentResolver.query(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.MediaColumns._ID),
+                    selection,
+                    args,
+                    null
+                )?.use { it.count > 0 } ?: false
+            }.getOrDefault(false)
+        }
+        val dir = publicDir() ?: return false
+        return File(dir, name).exists()
+    }
+
     /** 改显示名（保留扩展名）；成功返回新的引用（SAF 重命名后 URI 可能变化）。 */
     fun rename(context: Context, ref: String, newBase: String): String? {
         if (!isContentRef(ref)) return null

@@ -313,19 +313,44 @@ object YtDlpEngine {
             runDownload(task, target, dir, before, false, onProgress, onFile)
         }
         val result = renameToTitle(produced, task.title, task.url)
-        publishExtras(context, dir, before, result)
+        publishExtras(context, dir, before, result, task)
         return result
     }
 
-    /** 字幕/封面等附加文件单独发布到公共目录；主视频仍由下载管理器发布。 */
-    private fun publishExtras(context: Context, dir: File, before: Set<String>, main: File?) {
+    /**
+     * 字幕/封面等附加文件单独发布到公共目录；主视频仍由下载管理器发布。
+     *
+     * 归属判定：只看「本次新增」会把「重试前就已经下好的封面」漏掉（上次发布前失败），
+     * 所以再按「与主视频同 basename」和「与任务标题同 basename」认领一次。
+     * 幂等：公共目录已有同名文件时不再重复发布，并删掉私有副本。
+     */
+    private fun publishExtras(
+        context: Context,
+        dir: File,
+        before: Set<String>,
+        main: File?,
+        task: DownloadTask
+    ) {
         val extraExtensions = setOf("srt", "vtt", "ass", "ssa", "jpg", "jpeg", "png", "webp")
         val mainPath = main?.absolutePath
+        val mainBase = main?.nameWithoutExtension
+        val titleBase = FileNames.safeTitle(task.title, task.url)
+            .takeIf { it.isNotBlank() && !FileNames.isPlaceholder(it) }
         dir.listFiles()
-            ?.filter { it.isFile && it.name !in before && it.absolutePath != mainPath }
+            ?.filter { it.isFile && it.absolutePath != mainPath }
             ?.filter { it.extension.lowercase() in extraExtensions }
+            ?.filter { extra ->
+                extra.name !in before ||
+                    (mainBase != null && extra.nameWithoutExtension == mainBase) ||
+                    (titleBase != null && extra.nameWithoutExtension == titleBase)
+            }
             ?.forEach { extra ->
-                PublicStorage.publish(context, extra)
+                if (PublicStorage.hasFileNamed(context, extra.name)) {
+                    // 公共目录已有同名附件，删掉私有副本即可，避免重试后封面翻倍
+                    runCatching { extra.delete() }
+                } else {
+                    PublicStorage.publish(context, extra)
+                }
             }
     }
 
