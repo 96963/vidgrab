@@ -44,6 +44,23 @@
 - 单 ABI 打包：`gradle assembleDebug -Pabi=arm64-v8a`（必须先 `clean`，否则增量构建会保留旧 ABI 的 so，包体仍是 141MB）
 - 仍待：正式签名（缺 `keystore.properties`，当前 release 附件是 debug 签名）
 
+### 发行版 v1.4.37（2026-11-15 已完成，双端）
+- 推送：Gitee `eef45e5..2e18158`、GitHub `eef45e5..2e18158`，tag `v1.4.37` 两端都已建
+- Gitee release id `1311168`，attachment id `3704284`，下载页 `https://gitee.com/WSFSA123/vid-grab/releases/tag/v1.4.37`
+- GitHub release id `445867196`，asset id `750118300`，下载页 `https://github.com/96963/vidgrab/releases/tag/v1.4.37`
+- 附件同名 `VidGrab-1.4.37-arm64-v8a-debug.apk`，82,841,497 B
+  - SHA256 `c062d2372040c0ce1ce7d966f41ac6832363a4de2472cb9849fc7645768dbc51`
+  - GitHub API 回读 `digest=sha256:c062d2372040c0ce1ce7d966f41ac6832363a4de2472cb9849fc7645768dbc51`，与本地一致
+- 中文乱码治理：正文用 Python `json.dumps(ensure_ascii=False)` 生成 UTF-8 无 BOM JSON，`curl --data-binary` + `Content-Type: application/json; charset=utf-8` 提交；两端回读正文中文均正常（无 `\uXXXX`、无乱码）
+- **GitHub 网络坑（下次会再遇到）**：
+  - 本机 DNS 把 `github.com` 解析成 `57.155.223.240`（污染地址，连不上）；`api.github.com`、`uploads.github.com` 反而直连正常
+  - 改 hosts 需要管理员权限，做不到（`AppendAllText` 报 Access denied）
+  - 可用办法：写一个本地 CONNECT 转发代理 `E:\claude\REA\.tools\ghproxy.py`（监听 8899，把 `github.com:443` 转发到可用 IP `140.82.112.4:443`，自动保留 SNI，证书校验通过），然后
+    `git -c http.proxy=http://127.0.0.1:8899 -c http.version=HTTP/1.1 push github main`
+  - 注意：`git -c http.curloptResolve=...` 在本机 Git（schannel 后端）直接报 `Unsupported SSL backend 'openssl'`，不可用
+  - 代理用完要 kill 并确认 hosts 未被改动
+  - 备选可用 IP：`140.82.112.4`（1.2s）、`140.82.114.4`（1.5s）、`20.247.166.64`（2.1s）
+
 ### 镜像：GitHub 同步（2026-11-15 已完成）
 - `git push github main` 成功：`218eb4d..187c5e2`（GitHub 仓库是公开的，凭证在 `~/.git-credentials` 的 `store` helper 里）
 - GitHub 发行版 `v1.4.21`（release id `445793973`，asset id `749736791`）
