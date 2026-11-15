@@ -36,7 +36,7 @@ object DownloadStore {
                 url = url,
                 title = item.optString("title", url),
                 thumbnail = item.optString("thumbnail").ifBlank { null },
-                selector = item.optString("selector", "bestvideo*+bestaudio/best"),
+                selector = item.optString("selector", YtDlpEngine.DEFAULT_SELECTOR),
                 audioOnly = item.optBoolean("audioOnly", false),
                 state = if (savedState == TaskState.DOWNLOADING) TaskState.QUEUED else savedState,
                 progress = item.optDouble("progress", 0.0).toFloat(),

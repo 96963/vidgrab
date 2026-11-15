@@ -1,18 +1,50 @@
 # VidGrab 未完成清单与问题
 
-记录时间：2026-11-14 22:11（周六，Asia/Shanghai）
-当前版本：`1.4.3 / versionCode 10`，debug 包已安装到 vivo V2156A（Android 11，arm64-v8a）
+记录时间：2026-11-15 11:40（周日，Asia/Shanghai）
+当前版本：`1.4.21 / versionCode 28`，debug 包已安装到 vivo V2156A（Android 11，arm64-v8a）
 当前代码：本地 `main` 干净；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
 工程路径：`E:\claude\REA\VidGrab`
 
-> 明天先看本文档，不需要重新读聊天记录。手机当前 ADB 已断开，开工第一步先重新连接手机。
+> 明天先看本文档，不需要重新读聊天记录。
+
+---
+
+## 0.1 2026-11-15 已解决（重要结论，勿重复排查）
+
+### 播放卡顿根因：视频编码是 AV1，设备无 AV1 硬解
+- 现象：App 内播放明显卡顿、不流畅。
+- 取证方式：`PlayerActivity` 注册 `AnalyticsListener`，把 `onVideoInputFormatChanged` / `onDroppedVideoFrames` / `onRenderedFirstFrame` 写进 `files/vglog.txt`（vivo 屏蔽第三方 App 的 java logcat，只能写文件看）。
+- 证据（1.4.20 版本、AV1 文件）：
+  ```
+  Player: format=video/av01 1920x1080 fps=29.468302
+  Player: dropped=73 in 1087ms
+  Player: dropped=50 in 4911ms
+  Player: dropped=128 in 5471ms
+  Player: dropped=133 in 4998ms
+  ```
+  即每约 4.9 秒丢 50~133 帧，周期与 GOP（15 个 I 帧 / 69s ≈ 4.6s）吻合，属软解跟不上。
+- 文件本身没问题：moov 前置（faststart）、vide+soun 双轨、无 elst、stts delta 543/542（29.47fps，仅 1 处 944 异常）、音频 stts 单条 1024。
+- 修法：`YtDlpEngine.DEFAULT_SELECTOR` 改成优先 H.264：
+  `bestvideo[vcodec^=avc1]+bestaudio/bestvideo[vcodec^=h264]+bestaudio/bestvideo*+bestaudio/best`
+- 验证（1.4.21）：`Player: format=video/avc`，播放 50 秒 **零 dropped 日志** → 卡顿解决。
+- 遗留：已经下载好的 AV1 文件仍会卡，需要重新下载；如需保留 AV1 选项，可在格式卡片里手动选。
+
+### 保存位置：一律公共目录 Download/VidGrab
+- 用户明确要求：**不要私有目录**，除非用户自己用 SAF 选择。
+- 因此「卸载 App 时自动删除视频」在 Android 上做不到（公共目录文件归用户；MediaStore 的 owner 清理 vivo 未执行；App 无卸载回调）。
+- 已试过并放弃：私有目录 `Android/data/...`（用户否决）、`Android/media/<包名>`（更接近但仍非公共 Download）、App 内「清空全部下载」按钮（用户认为没人会去点）。
+- 现状：1.4.19 起默认回到 MediaStore `Download/VidGrab`，任务页显示 `Download/VidGrab/<文件名>`。
+
+### 版本演进（2026-11-14 晚 ~ 2026-11-15）
+`1.4.6/13` → `1.4.7/14` → `1.4.8/15`（启动优化+诊断日志）→ `1.4.9/16`（DiagLog 写文件）→ `1.4.10/17`（播放列表宽容解析）→ `1.4.11/18`（下载 err 日志）→ `1.4.12/19`（标题回填+展开上限 30）→ `1.4.13/20`（私有目录，已回退）→ `1.4.14/21`（回公有+时间戳修正）→ `1.4.15/22`（播放器解码回退+缓冲）→ `1.4.16/23`（清理按钮，已删）→ `1.4.17/24`（读权限版，已回退）→ `1.4.18/25`（Android/media，已回退）→ `1.4.19/26`（回 Download/VidGrab）→ `1.4.20/27`（播放器丢帧诊断）→ `1.4.21/28`（默认优先 AVC）
 
 ---
 
 ## 0. 明天开工前
 
 - [ ] 重新连接手机，确认 `adb devices -l` 能看到 `35059217030026B`
-- [ ] 确认已安装版本仍是 `versionCode=10 / versionName=1.4.3`；如果重装过，先核对
+- [ ] 确认已安装版本仍是 `versionCode=28 / versionName=1.4.21`；如果重装过，先核对
+  - 注意：本项目 `adb uninstall` 有时报 `Failure [DELETE_FAILED_INTERNAL_ERROR]`（vivo 保护），需先 `am force-stop` 再卸；若卸载失败会退化成覆盖安装、旧数据不清
 - [ ] 需要浏览器/本地测试源时，启动 `E:\claude\REA\.tools\vidgrab-web\server.py`，并执行 `adb reverse tcp:8765 tcp:8765`
 - 手机输入法已切到 vivo（`com.vivo.ai.ime/.main.IMEService`，2026-11-15 上午）；Fcitx5 仍在设备上但不再默认。ADB `input text` 在 Fcitx5 下会被拼音组合改写，若键盘异常先确认默认输入法是 vivo
 
@@ -42,11 +74,13 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
   - 点「取消」→ 任务 `CANCELED`，任务通知被清除；`.part`（3,403,240 B）仍保留在临时目录
   - 遗留小点：取消后 `.part` 未删除，是否按设计保留待确认；重复取消同一任务无副作用
 
-- [ ] **批量/播放列表真实入队验证**
+- [x] **批量/播放列表真实入队验证（2026-11-15 真机通过）**
   - 批量多链接（2026-11-15 真机通过）：切到 vivo 输入法后 ADB 输入正常；两条本地直链（`/real.mp4`+`/long_real.mp4`）经「批量下载多个链接 / 播放列表」弹窗入队，拆成 2 个任务，`createdAt` 相差 123ms（同时启动），均 DONE：69.9 KB + 545.4 KB，同名自动加「 (1)」后缀不互相覆盖，MediaStore `821448`/`821449`，MP4 解析确认（本地源本身无音轨，只 vide+meta）
   - 遗留教训：ADB `input text` 在 Fcitx5 下会被拼音组合改写（`aaa%nbbb` → “啊啊啊%”），今后 ADB 输入前先 `ime set com.vivo.ai.ime/.main.IMEService`
-  - 播放列表自动展开（2026-11-15 进行中）：1.4.4 重写 `fetchPlaylistEntries` 支持「容器式 + 流式多行」（B 站 series 输出纯条目流，旧代码只认 `_type=playlist` 容器行故失败）；1.4.5（versionCode 12）再加 3 次执行重试 + `--extractor-retries 10`。PC 端同版 yt-dlp `--flat-playlist --dump-json` 输出 5 行条目（`playlist_id/playlist_index/n_entries` 齐全）；**真机复测 3 次均只入队第 1 条**，根因已定位为**手机网络**而非代码：手机连 PC 热点时 B 站网页/API 加载空白（浏览器 0.00 KB/s、`space.bilibili.com` 重定向 m 站后空白、ping 公网 25-50% 丢包），而 PC 同网络 5 秒拿 5 条；手机到 B 站视频 CDN 下载却正常。待手机连家庭 WiFi（网络好转）后重测 5 条入队
-  - 已验证 youtubedl-android 0.18.1 `execute()` 无超时参数（`E:\claude\REA\.tools\src\youtubedl-android-0.18.1`），排除“20s 被杀”假设
+  - **播放列表自动展开（1.4.10 真机通过，5/5 入队）**：根因是 `--dump-json` 末尾有空行，Jackson `readTree("")` 返回 MissingNode 而非 null，旧的 `roots.all { playlist_id非空 || playlist_index.isNumber || n_entries.isNumber }` 被这个空节点判 false，整体丢弃后回退只入队第 1 条。1.4.10 改为宽容解析（能映射成视频 URL 就收，不再要求每行带播放列表元信息），并保留「单行交给 fetchInfo」以维持单视频的封面/格式不变
+  - 诊断证据（`files/vglog.txt`，1.4.9 起）：`attempt=1 cost=5241ms len=5175 lines=6` → `parse roots=6 mapped=5 lens=[954,954,954,954,954,0]` → `UI entries=5`
+  - 排查过程记录：1.4.4 重写 fetchPlaylistEntries 支持容器式+流式；1.4.5 加 3 次重试 + `--extractor-retries 10`；PC 同版 yt-dlp 输出 5 行正常；youubedl-android 0.18.1 `execute()` 无超时参数；曾误判为手机网络问题（旧 PC 热点确有 25-50% 丢包），换家庭 WiFi 后仍 1 条才转向 App 侧判定
+  - 遗留小问题：展开后任务标题显示「视频 1」~「视频 5」（`entryToTarget` 未取条目 title，用索引兜底），待小修
   - 测试合集：`space.bilibili.com/31984294/channel/seriesdetail?sid=446778`（5 条，BV1uB4y1H7ps / BV1uv42127gS / BV19D4y117Qf / BV1v6421G7C4 / BV19g411e7ia）
   - 批量弹窗内按钮文案：开始下载（解析中变“处理中…”），空输入时按钮置灰
 
@@ -67,16 +101,14 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
   - 只验证了“仅 Wi‑Fi 开启时移动网络下排队/提示”，没有在下载中途关 Wi‑Fi/切移动数据
   - 要核对：任务进入 `PAUSED` 或排队、不继续偷跑流量；恢复 Wi‑Fi 后继续/重试
 
-- [ ] **并发 3 路真实任务未验证**
-  - 设置里 `concurrent=3` 已写入 `download_settings.xml`，但是否真有 3 个任务同时 DOWNLOADING 没观察到
-  - 准备 3 个短任务同时入队，看任务页/日志
+- [x] **并发 3 路真实任务（2026-11-15 真机通过）**
+  - 3 个本地慢源（`/slow.mp4`+`/slow2.mp4`+`/range-slow.mp4`）经批量弹窗入队，任务页同时 3 个「下载中」，24%/10%/51% 各自不同 speed，确认并发上限 3 生效
 
-- [ ] **杀进程重启后的自动续传未实测**
-  - 任务 JSON 落盘、未完成任务重启续传已实现；没有做 `force-stop` 后重开对比
-  - 要核对：任务还在、状态恢复、`.part` 继续增长、不重复下载已完成文件
+- [x] **杀进程重启后的自动续传（2026-11-15 真机通过）**
+  - `/range-slow.mp4` 下到 50.5% 时 `am force-stop`，`.part`（18,224,941 B）保留、JSON 里任务仍在；`am start` 重启后自动续传（57.4%→完成，未归零），成品落 `Download/VidGrab/127.0.0.1 20261115-0848.mp4`（MediaStore 821457）
 
-- [ ] **限速只实测了 512 KB/s**
-  - 1024 / 2048 / 4096 KB/s 未逐档验证；不是阻塞项，时间够再补
+- [x] **限速三档（2026-11-15 真机通过）**
+  - `/range.mp4`（32MB 无节流）实测：1 MB/s→1021.18 KiB/s、2 MB/s→1.99 MiB/s、4 MB/s→3.96 MiB/s，均贴合 `--limit-rate` 上限；测后已还原 512 KB/s
 
 ---
 

@@ -16,8 +16,8 @@ android {
         applicationId = "com.vidgrab.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.4.5"
+        versionCode = 28
+        versionName = "1.4.21"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

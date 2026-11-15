@@ -21,6 +21,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,8 +63,6 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
         requestNotificationPermission()
         requestStoragePermission()
-        // 恢复上次未完成的下载
-        DownloadManager.resumePending()
 
         setContent {
             VidGrabTheme {
@@ -71,6 +70,8 @@ class MainActivity : ComponentActivity() {
                 syncSystemBars(this@MainActivity, isSystemInDarkTheme())
                 var tab by selectedTab
                 val pending = pendingUrl.value
+                // 首帧渲染完成后再恢复中断的下载，避免阻塞启动
+                LaunchedEffect(Unit) { DownloadManager.resumePending() }
 
                 Scaffold(
                     bottomBar = {

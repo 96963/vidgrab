@@ -74,6 +74,7 @@ import com.vidgrab.app.core.ErrorMessages
 import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.FormatOption
 import com.vidgrab.app.core.MediaInfo
+import com.vidgrab.app.core.PublicStorage
 import com.vidgrab.app.core.YtDlpEngine
 import com.vidgrab.app.core.YtDlpUpdater
 import kotlinx.coroutines.launch
@@ -420,26 +421,38 @@ fun HomeScreen(
                         scope.launch {
                             var queued = 0
                             var failed = 0
+                            var skipped = 0
                             targets.forEach { target ->
+                                com.vidgrab.app.core.DiagLog.w("Flat", "UI target=$target")
                                 val entries = runCatching {
                                     YtDlpEngine.fetchPlaylistEntries(context, target)
+                                }.onFailure {
+                                    com.vidgrab.app.core.DiagLog.w("Flat", "UI EXC cls=${it.javaClass.simpleName} msg=${it.message}")
                                 }.getOrDefault(emptyList())
+                                com.vidgrab.app.core.DiagLog.w("Flat", "UI entries=${entries.size}")
                                 if (entries.isNotEmpty()) {
-                                    entries.forEach { (entryUrl, entryTitle) ->
-                                        DownloadManager.enqueue(
-                                            url = entryUrl,
-                                            title = FileNames.clean(entryTitle).ifBlank { "视频" },
-                                            thumbnail = null,
-                                            selector = "bestvideo*+bestaudio/best",
-                                            audioOnly = false
-                                        )
-                                        queued++
+                                    // 多 P 视频/大合集可能一次几百条，整批入队会把存储占满
+                                    val limited = entries.take(MAX_PLAYLIST_ENTRIES)
+                                    limited.forEach { (entryUrl, entryTitle) ->
+                                        runCatching {
+                                            DownloadManager.enqueue(
+                                                url = entryUrl,
+                                                title = FileNames.clean(entryTitle).ifBlank { "视频" },
+                                                thumbnail = null,
+                                                selector = com.vidgrab.app.core.YtDlpEngine.DEFAULT_SELECTOR,
+                                                audioOnly = false
+                                            )
+                                            queued++
+                                        }
+                                    }
+                                    if (entries.size > limited.size) {
+                                        skipped += entries.size - limited.size
                                     }
                                 } else {
                                     runCatching { YtDlpEngine.fetchInfo(context, target) }
                                         .onSuccess { media ->
                                             val format = media.formats.firstOrNull {
-                                                it.id == "bestvideo*+bestaudio/best"
+                                                it.id == com.vidgrab.app.core.YtDlpEngine.DEFAULT_SELECTOR
                                             } ?: media.formats.first()
                                             DownloadManager.enqueue(
                                                 url = media.webpageUrl,
@@ -457,9 +470,13 @@ fun HomeScreen(
                             batchText = ""
                             showBatch = false
                             if (queued > 0) onTaskStarted()
+                            val extra = buildString {
+                                if (failed > 0) append("，$failed 个解析失败")
+                                if (skipped > 0) append("，另有 $skipped 条未加入（上限 $MAX_PLAYLIST_ENTRIES）")
+                            }
                             android.widget.Toast.makeText(
                                 context,
-                                if (failed > 0) "已加入 $queued 个任务，$failed 个解析失败" else "已加入 $queued 个任务",
+                                "已加入 $queued 个任务$extra",
                                 android.widget.Toast.LENGTH_LONG
                             ).show()
                         }
@@ -471,6 +488,7 @@ fun HomeScreen(
             }
         )
     }
+
 
     if (showSettings) {
         ModalBottomSheet(
@@ -827,3 +845,6 @@ fun formatSize(bytes: Long): String {
     }
     return String.format("%.1f %s", value, units[index])
 }
+
+/** 一次展开最多入队的条目数：130 集这类多 P 视频整批入队会把存储占满。 */
+private const val MAX_PLAYLIST_ENTRIES = 30

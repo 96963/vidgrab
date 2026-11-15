@@ -4,5 +4,8 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <!-- 启动窗口与首帧同色，避免深色模式下黑屏闪变 -->
+        <item name="android:windowBackground">#FCFCFC</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

@@ -3,6 +3,7 @@ package com.vidgrab.app
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.res.Configuration
 import android.graphics.Color
 import android.media.AudioManager
@@ -31,13 +32,17 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.vidgrab.app.core.CookieStore
+import com.vidgrab.app.core.DiagLog
 import com.vidgrab.app.ui.syncStatusBarOnly
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -93,10 +98,44 @@ class PlayerActivity : ComponentActivity() {
                 ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
         }
 
-        val exoPlayer = ExoPlayer.Builder(this).build()
+        // 硬解不兼容（部分 vivo 机型对 B 站 VFR/High profile 会有掉帧）时自动回退软解
+        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true)
+        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30_000, 120_000, 2_000, 5_000)
+            .build()
+        val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
+            .setLoadControl(loadControl)
+            .build()
         player = exoPlayer
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.playWhenReady = true
+        // 丢帧统计写入诊断日志：判断卡顿来自解码还是播放器
+        exoPlayer.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onRenderedFirstFrame(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                output: Any,
+                renderTimeMs: Long
+            ) {
+                DiagLog.w("Player", "first frame cost=${renderTimeMs}ms")
+            }
+
+            override fun onDroppedVideoFrames(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                droppedFrames: Int,
+                elapsedMs: Long
+            ) {
+                DiagLog.w("Player", "dropped=$droppedFrames in ${elapsedMs}ms")
+            }
+
+            override fun onVideoInputFormatChanged(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                format: androidx.media3.common.Format,
+                decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
+            ) {
+                DiagLog.w("Player", "format=${format.sampleMimeType} ${format.width}x${format.height} fps=${format.frameRate}")
+            }
+        })
         exoPlayer.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 Toast.makeText(
@@ -352,9 +391,11 @@ class PlayerActivity : ComponentActivity() {
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
 
         fun start(context: Context, url: String, title: String? = null) {
-            val headers = CookieStore.headersFor(url)
+            // 支持 content://、http(s) 与本地绝对路径
+            val safeUrl = if (url.startsWith("/")) Uri.fromFile(File(url)).toString() else url
+            val headers = CookieStore.headersFor(safeUrl)
             val intent = Intent(context, PlayerActivity::class.java)
-                .putExtra(EXTRA_URL, url)
+                .putExtra(EXTRA_URL, safeUrl)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_HEADER_KEYS, headers.keys.toTypedArray())
                 .putExtra(EXTRA_HEADER_VALUES, headers.values.toTypedArray())

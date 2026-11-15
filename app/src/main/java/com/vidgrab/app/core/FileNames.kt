@@ -173,6 +173,21 @@ object FileNames {
     fun timestamp(): String =
         SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
 
+    /** 播放列表展开时拿不到条目标题，入队用的是「视频 1」这类占位名。 */
+    private val placeholderTitle = Regex("""^(视频|video)\s*\d*$""", RegexOption.IGNORE_CASE)
+
+    fun isPlaceholder(title: String?): Boolean {
+        val text = title?.trim().orEmpty()
+        return text.isEmpty() || placeholderTitle.matches(text)
+    }
+
+    /** 从 yt-dlp 生成的文件名（`真实标题 [id].ext`）里取回真实标题。 */
+    fun titleFromGeneratedName(fileName: String): String? {
+        val stem = fileName.substringBeforeLast('.')
+        val cut = stem.substringBeforeLast(" [", "").ifBlank { stem }
+        return clean(cut).takeIf { it.isNotBlank() && !looksLikeHash(it) }
+    }
+
     private fun decode(value: String): String =
         runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
 

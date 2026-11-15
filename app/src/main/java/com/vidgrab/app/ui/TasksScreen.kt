@@ -187,7 +187,7 @@ fun TasksScreen() {
                     onRetry = { DownloadManager.retry(task.id) },
                     onRename = { renameTarget = task },
                     onOpen = {
-                        task.filePath?.let { openFile(context, it) }
+                        task.filePath?.let { openFile(context, it, task.title) }
                     }
                 )
             }
@@ -541,11 +541,7 @@ private fun fileLine(context: android.content.Context, task: DownloadTask): Stri
     val ref = task.filePath ?: return null
     val info = PublicStorage.info(context, ref) ?: return null
     val size = formatSize(info.size)
-    val location = if (PublicStorage.isContentRef(ref)) {
-        "Download/VidGrab/${info.name}"
-    } else {
-        "VidGrab/${info.name}"
-    }
+    val location = "${PublicStorage.displayPath}/${info.name}"
     return if (size.isBlank()) location else "$size · $location"
 }
 
@@ -567,7 +563,14 @@ private fun stateText(task: DownloadTask): String = when (task.state) {
     TaskState.CANCELED -> "已取消"
 }
 
-private fun openFile(context: android.content.Context, path: String) {
+private fun openFile(context: android.content.Context, path: String, title: String? = null) {
+    // 统一用应用内播放器：系统播放器（vivo 视频）对 B 站转封装文件常出现卡顿/无声
+    runCatching { com.vidgrab.app.PlayerActivity.start(context, path, title) }.onFailure {
+        openWithSystem(context, path)
+    }
+}
+
+private fun openWithSystem(context: android.content.Context, path: String) {
     val uri: Uri
     val mime: String
     if (PublicStorage.isContentRef(path)) {

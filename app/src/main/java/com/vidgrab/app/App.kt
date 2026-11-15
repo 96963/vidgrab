@@ -5,6 +5,7 @@ import com.vidgrab.app.core.AdBlocker
 import com.vidgrab.app.core.BrowserStore
 import com.vidgrab.app.core.CookieStore
 import com.vidgrab.app.core.CrashReporter
+import com.vidgrab.app.core.DiagLog
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.Notifications
@@ -20,6 +21,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        DiagLog.init(this)
         CrashReporter.install(this)
         Notifications.createChannel(this)
         SiteSettings.init(this)

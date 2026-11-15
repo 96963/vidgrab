@@ -67,7 +67,9 @@ object YtDlpEngine {
     /** 播放列表展开：--flat-playlist 只取条目，不解析每个视频的格式。 */
     suspend fun fetchPlaylistEntries(context: Context, url: String): List<Pair<String, String>> =
         withContext(Dispatchers.IO) {
+            DiagLog.w("Flat", "ENTER url=$url")
             ensureReady(context)
+            DiagLog.w("Flat", "READY url=$url")
             val target = normalizeUrl(url)
             val request = YoutubeDLRequest(target)
                 .addOption("--flat-playlist")
@@ -86,7 +88,10 @@ object YtDlpEngine {
                         runCatching { mapper.readTree(line) }.getOrNull()
                     }
                     .toList()
-                if (roots.isEmpty()) return emptyList()
+                if (roots.isEmpty()) {
+                    DiagLog.w("Flat", "parse roots=0")
+                    return emptyList()
+                }
                 // 容器式（YouTube 等）：第一行 _type=playlist，entries 内嵌
                 val first = roots.first()
                 if (first.path("_type").asText("") == "playlist") {
@@ -97,22 +102,37 @@ object YtDlpEngine {
                     }.take(200)
                 }
                 // 流式（B 站合集/系列等）：每行一个条目，没有 playlist 容器行。
-                // 判定：多行且每行都带播放列表元信息（playlist_id / playlist_index / n_entries）。
-                val isStream = roots.size > 1 && roots.all {
-                    it.path("playlist_id").asText("").isNotBlank() ||
-                        it.path("playlist_index").isNumber ||
-                        it.path("n_entries").isNumber
+                // 宽容解析：逐行尝试映射成视频条目，能映射就收，不再要求每行都带
+                // playlist_id/n_entries 等元信息（弱网/版本差异下这些字段可能缺失）。
+                val mapped = roots.mapIndexedNotNull { index, entry ->
+                    entryToTarget(entry, index)
                 }
-                if (isStream) {
-                    return roots.mapIndexedNotNull { index, entry ->
-                        entryToTarget(entry, index)
-                    }.take(200)
-                }
+                DiagLog.w(
+                    "Flat",
+                    "parse roots=${roots.size} mapped=${mapped.size} lens=${roots.map { it.toString().length }}"
+                )
+                if (mapped.size > 1) return mapped.take(200)
+                // 只有一行说明是单个视频（不是播放列表），交给 fetchInfo 拿封面/格式
                 return emptyList()
             }
             for (attempt in 1..3) {
-                val response = YoutubeDL.getInstance().execute(request)
-                val entries = parse(response.out)
+                val t0 = System.currentTimeMillis()
+                val out = try {
+                    val response = YoutubeDL.getInstance().execute(request)
+                    response.out ?: ""
+                } catch (e: Throwable) {
+                    DiagLog.w(
+                        "Flat",
+                        "EXC attempt=$attempt url=$url cls=${e.javaClass.simpleName} msg=${e.message} cost=${System.currentTimeMillis() - t0}ms"
+                    )
+                    Thread.sleep(1500L)
+                    continue
+                }
+                DiagLog.w(
+                    "Flat",
+                    "attempt=$attempt cost=${System.currentTimeMillis() - t0}ms len=${out.length} lines=${out.lines().size} head=${out.take(800).replace("\n", "\\n")}"
+                )
+                val entries = parse(out)
                 if (entries.isNotEmpty()) return@withContext entries
                 if (attempt < 3) {
                     android.util.Log.w("VidGrab", "flat-playlist attempt $attempt failed, retrying")
@@ -204,12 +224,16 @@ object YtDlpEngine {
         return this
     }
 
+    /** 默认格式：优先 H.264（绝大多数机型和系统播放器都能硬解；AV1 无硬解时会严重丢帧）。 */
+    const val DEFAULT_SELECTOR =
+        "bestvideo[vcodec^=avc1]+bestaudio/bestvideo[vcodec^=h264]+bestaudio/bestvideo*+bestaudio/best"
+
     private fun buildFormats(formats: List<VideoFormat>): List<FormatOption> {
         val result = LinkedHashMap<String, FormatOption>()
 
         result["best"] = FormatOption(
-            id = "bestvideo*+bestaudio/best",
-            label = "最佳画质（自动合并）",
+            id = DEFAULT_SELECTOR,
+            label = "最佳画质（自动合并，优先 H.264）",
             ext = "mp4",
             filesize = 0,
             audioOnly = false
@@ -352,9 +376,15 @@ object YtDlpEngine {
             request.addOption("--audio-quality", "0")
         } else {
             request.addOption("--merge-output-format", "mp4")
+            // B 站分轨视频（fMP4 视频轨 + m4a 音轨）直接 -c copy 合并后可能带负/偏移
+            // 时间戳和 edit list，ExoPlayer 播放会周期性卡顿；这里把时间戳归零并前移 moov。
+            request.addOption(
+                "--postprocessor-args",
+                "Merger:-avoid_negative_ts make_zero -movflags +faststart"
+            )
         }
 
-        YoutubeDL.getInstance().execute(request, processId = task.id) { progress, eta, line ->
+        val response = YoutubeDL.getInstance().execute(request, processId = task.id) { progress, eta, line ->
             // 记下 yt-dlp 实际写入的路径，取消/删除时可据此清掉 .part
             if (!line.isNullOrBlank()) {
                 destinationOf(line)?.let(onFile)
@@ -370,6 +400,16 @@ object YtDlpEngine {
             }
             onProgress((progress / 100f).coerceIn(0f, 1f), speed, etaText)
         }
+        // 合并（分轨 audio/video）失败时任务仍可能返回成功，留下无音轨的视频，
+        // 这里把 yt-dlp 的错误输出记下来用于定位。
+        DiagLog.w(
+            "Dl",
+            "done title=${task.title.take(30)} exit=${response.exitCode} errTail=${response.err?.takeLast(600)?.replace("\n", "\\n")}"
+        )
+        DiagLog.w(
+            "Dl",
+            "files=" + (dir.listFiles()?.filter { it.name !in before && !it.name.endsWith(".part") }?.joinToString("|") { "${it.name}:${it.length()}" })
+        )
 
         return dir.listFiles()
             ?.filter {
@@ -406,6 +446,8 @@ object YtDlpEngine {
     /** 下载完成后按清洗过的标题重命名，避免把网页标题原样当文件名。 */
     private fun renameToTitle(file: File?, title: String, url: String?): File? {
         if (file == null) return null
+        // 列表展开入队时标题是「视频 N」占位名，保留 yt-dlp 生成的真实标题文件名
+        if (FileNames.isPlaceholder(title)) return file
         val base = FileNames.safeTitle(title, url)
         if (base.isBlank()) return file
         val parent = file.parentFile ?: return file

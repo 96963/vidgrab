@@ -262,7 +262,15 @@ object DownloadManager {
             )
             // 下载中可能改过名，落盘时以最新标题为准
             val current = _tasks.value.firstOrNull { it.id == task.id }
-            val file = renameFinished(produced, current?.title ?: task.title, task.url)
+            val desiredTitle = current?.title ?: task.title
+            val file = renameFinished(produced, desiredTitle, task.url)
+            // 列表展开入队时标题是「视频 N」占位名：用 yt-dlp 生成文件名里的真实标题回填任务
+            if (FileNames.isPlaceholder(desiredTitle)) {
+                val realTitle = produced?.let { FileNames.titleFromGeneratedName(it.name) }
+                if (!realTitle.isNullOrBlank()) {
+                    update(task.id) { it.copy(title = realTitle) }
+                }
+            }
             // 成品导出到公共下载目录；大文件复制期间保持「处理中」并刷新进度
             var ref: String? = null
             var warning: String? = null
@@ -479,6 +487,8 @@ object DownloadManager {
     /** 下载完成时按任务的最新标题落盘（下载中改过名也能生效）。 */
     private fun renameFinished(file: File?, title: String, url: String?): File? {
         if (file == null || !file.exists()) return file
+        // 占位标题（列表展开的「视频 N」）不要覆盖 yt-dlp 写好的真实标题文件名
+        if (FileNames.isPlaceholder(title)) return file
         val base = FileNames.safeTitle(title, url)
         if (base.isBlank() || file.nameWithoutExtension == base) return file
         val dir = file.parentFile ?: return file
