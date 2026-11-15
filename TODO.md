@@ -45,7 +45,9 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
 - [ ] **批量/播放列表真实入队验证**
   - 批量多链接（2026-11-15 真机通过）：切到 vivo 输入法后 ADB 输入正常；两条本地直链（`/real.mp4`+`/long_real.mp4`）经「批量下载多个链接 / 播放列表」弹窗入队，拆成 2 个任务，`createdAt` 相差 123ms（同时启动），均 DONE：69.9 KB + 545.4 KB，同名自动加「 (1)」后缀不互相覆盖，MediaStore `821448`/`821449`，MP4 解析确认（本地源本身无音轨，只 vide+meta）
   - 遗留教训：ADB `input text` 在 Fcitx5 下会被拼音组合改写（`aaa%nbbb` → “啊啊啊%”），今后 ADB 输入前先 `ime set com.vivo.ai.ime/.main.IMEService`
-  - 播放列表自动展开：还没验，可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL 验证
+  - 播放列表自动展开（2026-11-15 进行中）：1.4.4 重写 `fetchPlaylistEntries` 支持「容器式 + 流式多行」（B 站 series 输出纯条目流，旧代码只认 `_type=playlist` 容器行故失败）；1.4.5（versionCode 12）再加 3 次执行重试 + `--extractor-retries 10`。PC 端同版 yt-dlp `--flat-playlist --dump-json` 输出 5 行条目（`playlist_id/playlist_index/n_entries` 齐全）；**真机复测 3 次均只入队第 1 条**，根因已定位为**手机网络**而非代码：手机连 PC 热点时 B 站网页/API 加载空白（浏览器 0.00 KB/s、`space.bilibili.com` 重定向 m 站后空白、ping 公网 25-50% 丢包），而 PC 同网络 5 秒拿 5 条；手机到 B 站视频 CDN 下载却正常。待手机连家庭 WiFi（网络好转）后重测 5 条入队
+  - 已验证 youtubedl-android 0.18.1 `execute()` 无超时参数（`E:\claude\REA\.tools\src\youtubedl-android-0.18.1`），排除“20s 被杀”假设
+  - 测试合集：`space.bilibili.com/31984294/channel/seriesdetail?sid=446778`（5 条，BV1uB4y1H7ps / BV1uv42127gS / BV19D4y117Qf / BV1v6421G7C4 / BV19g411e7ia）
   - 批量弹窗内按钮文案：开始下载（解析中变“处理中…”），空输入时按钮置灰
 
 - [x] **SAF 保存目录（2026-11-15 真机通过）**

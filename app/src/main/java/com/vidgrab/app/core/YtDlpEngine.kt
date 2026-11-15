@@ -1,6 +1,7 @@
 package com.vidgrab.app.core
 
 import android.content.Context
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.yausername.aria2c.Aria2c
 import com.yausername.ffmpeg.FFmpeg
@@ -73,30 +74,65 @@ object YtDlpEngine {
                 .addOption("--dump-json")
                 .addOption("--no-warnings")
                 .addOption("--socket-timeout", "15")
+                .addOption("--extractor-retries", 10)
+                .addOption("--retries", 10)
             request.addDetectedHeaders(target)
-            val response = YoutubeDL.getInstance().execute(request)
+            // 弱网下 B 站合集 API 一次执行常只成功一半甚至失败，最多重试 3 次，
+            // 直到解析出可用的条目为止。
             val mapper = ObjectMapper()
-            val roots = response.out.lineSequence()
-                .mapNotNull { line ->
-                    runCatching { mapper.readTree(line) }.getOrNull()
+            fun parse(out: String): List<Pair<String, String>> {
+                val roots = out.lineSequence()
+                    .mapNotNull { line ->
+                        runCatching { mapper.readTree(line) }.getOrNull()
+                    }
+                    .toList()
+                if (roots.isEmpty()) return emptyList()
+                // 容器式（YouTube 等）：第一行 _type=playlist，entries 内嵌
+                val first = roots.first()
+                if (first.path("_type").asText("") == "playlist") {
+                    val entries = first.path("entries")
+                    if (!entries.isArray) return emptyList()
+                    return entries.mapIndexedNotNull { index, entry ->
+                        entryToTarget(entry, index)
+                    }.take(200)
                 }
-                .toList()
-            val first = roots.firstOrNull() ?: return@withContext emptyList()
-            if (first.path("_type").asText("") != "playlist") return@withContext emptyList()
-            val entries = first.path("entries")
-            if (!entries.isArray) return@withContext emptyList()
-            entries.mapIndexedNotNull { index, entry ->
-                val rawUrl = entry.path("webpage_url").asText("")
-                    .ifBlank { entry.path("url").asText("") }
-                val target = when {
-                    rawUrl.startsWith("http") -> rawUrl
-                    else -> entry.path("id").asText("").takeIf { it.isNotBlank() }
-                        ?.let { "https://www.youtube.com/watch?v=$it" }
-                } ?: return@mapIndexedNotNull null
-                val title = entry.path("title").asText("").ifBlank { "视频 ${index + 1}" }
-                target to title
-            }.take(200)
+                // 流式（B 站合集/系列等）：每行一个条目，没有 playlist 容器行。
+                // 判定：多行且每行都带播放列表元信息（playlist_id / playlist_index / n_entries）。
+                val isStream = roots.size > 1 && roots.all {
+                    it.path("playlist_id").asText("").isNotBlank() ||
+                        it.path("playlist_index").isNumber ||
+                        it.path("n_entries").isNumber
+                }
+                if (isStream) {
+                    return roots.mapIndexedNotNull { index, entry ->
+                        entryToTarget(entry, index)
+                    }.take(200)
+                }
+                return emptyList()
+            }
+            for (attempt in 1..3) {
+                val response = YoutubeDL.getInstance().execute(request)
+                val entries = parse(response.out)
+                if (entries.isNotEmpty()) return@withContext entries
+                if (attempt < 3) {
+                    android.util.Log.w("VidGrab", "flat-playlist attempt $attempt failed, retrying")
+                    Thread.sleep(2000L * attempt)
+                }
+            }
+            emptyList()
         }
+
+    private fun entryToTarget(entry: JsonNode, index: Int): Pair<String, String>? {
+        val rawUrl = entry.path("webpage_url").asText("")
+            .ifBlank { entry.path("url").asText("") }
+        val target = when {
+            rawUrl.startsWith("http") -> rawUrl
+            else -> entry.path("id").asText("").takeIf { it.isNotBlank() }
+                ?.let { "https://www.youtube.com/watch?v=$it" }
+        } ?: return null
+        val title = entry.path("title").asText("").ifBlank { "视频 ${index + 1}" }
+        return target to title
+    }
 
     /** 解析链接，返回标题、缩略图和可选格式列表。 */
     suspend fun fetchInfo(context: Context, url: String): MediaInfo = withContext(Dispatchers.IO) {

@@ -38,6 +38,11 @@ object NetworkPolicy {
                         caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
                 )
             }
+
+            /** 默认网络完全断开（无 Wi-Fi 且无蜂窝）时也要通知，避免任务继续占线。 */
+            override fun onLost(network: Network) {
+                onChange(false)
+            }
         }
         return runCatching { manager.registerDefaultNetworkCallback(callback); callback }.getOrNull()
     }
