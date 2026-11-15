@@ -44,6 +44,15 @@
 - 单 ABI 打包：`gradle assembleDebug -Pabi=arm64-v8a`（必须先 `clean`，否则增量构建会保留旧 ABI 的 so，包体仍是 141MB）
 - 仍待：正式签名（缺 `keystore.properties`，当前 release 附件是 debug 签名）
 
+### 镜像：GitHub 同步（2026-11-15 已完成）
+- `git push github main` 成功：`218eb4d..187c5e2`（GitHub 仓库是公开的，凭证在 `~/.git-credentials` 的 `store` helper 里）
+- GitHub 发行版 `v1.4.21`（release id `445793973`，asset id `749736791`）
+  - `https://github.com/96963/vidgrab/releases/tag/v1.4.21`
+  - 附件 82,716,889 B；**GitHub API 回传 `digest=sha256:5f54470bed56a1da99a9928515dbfe0df088895e76db5154d42846c9f6a1698e`，与本地一致**
+  - 国内直连 GitHub 下载很慢（180s 只到 10MB，超时），但文件本身完整；国内用户优先走 Gitee
+- 乱码治理：`git config core.quotepath false`（本仓库已设，中文文件名不再显示成 `\344\270\255` 之类转义）；仓库当前没有被跟踪的中文文件名；`TODO.md`/`PROGRESS.md`/`README.md` 均为 UTF-8 无 BOM；GitHub Release 正文按 UTF-8 字节 POST，回读校验中文正常
+- 注意：`core.quotepath` 存在 `.git/config`，不随代码同步，换机器克隆后需重新设置
+
 ### 版本演进（2026-11-14 晚 ~ 2026-11-15）
 `1.4.6/13` → `1.4.7/14` → `1.4.8/15`（启动优化+诊断日志）→ `1.4.9/16`（DiagLog 写文件）→ `1.4.10/17`（播放列表宽容解析）→ `1.4.11/18`（下载 err 日志）→ `1.4.12/19`（标题回填+展开上限 30）→ `1.4.13/20`（私有目录，已回退）→ `1.4.14/21`（回公有+时间戳修正）→ `1.4.15/22`（播放器解码回退+缓冲）→ `1.4.16/23`（清理按钮，已删）→ `1.4.17/24`（读权限版，已回退）→ `1.4.18/25`（Android/media，已回退）→ `1.4.19/26`（回 Download/VidGrab）→ `1.4.20/27`（播放器丢帧诊断）→ `1.4.21/28`（默认优先 AVC）
 
