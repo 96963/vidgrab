@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -69,6 +70,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -193,9 +195,8 @@ fun BrowserScreen(
 
     val pageState = remember { PageState().also { it.url = viewModel.currentUrl } }
 
-    // 页签切换不打断网页媒体：WebView 保持可见性状态，视频在后台页签继续缓冲/播放，
-    // 切回时无需重新 play()，避免自动播放策略拒绝恢复。
-    // 仅在 App 真正退到后台时暂停 WebView，避免后台出声和耗电。
+    // 页签切走时暂停网页里的音视频；切回来不自动续播，等用户点提示条。
+    // App 真正退到后台时才走 WebView.onPause。
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -207,6 +208,16 @@ fun BrowserScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 记录「离开浏览器页时确实有媒体在播」，切回来后才显示恢复提示
+    var mediaPausedByTabSwitch by remember { mutableStateOf(false) }
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            viewModel.pauseMediaForTabSwitch { paused ->
+                if (paused) mediaPausedByTabSwitch = true
+            }
+        }
     }
 
     val detected by MediaSniffer.items.collectAsStateWithLifecycle()
@@ -653,6 +664,35 @@ fun BrowserScreen(
                         pageError = null
                         viewModel.reload()
                     }) { Text("重新加载") }
+                }
+            }
+
+            // 离开浏览器页时暂停了网页播放：切回来给一个显式入口，用户点了才继续
+            if (isActive && mediaPausedByTabSwitch) {
+                Surface(
+                    onClick = {
+                        mediaPausedByTabSwitch = false
+                        viewModel.resumePausedMedia()
+                    },
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("网页播放已暂停 · 点击继续播放", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
         }
