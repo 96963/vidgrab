@@ -427,4 +427,6 @@
 **仍未解决**
 - nkdvd 类站点（播放地址加密 + 需登录）纯抓取拿不到流
 - 任务偶发入队即 `PAUSED`（warning「已暂停」、progress 0），触发源未定位（代码中只有任务卡暂停按钮与通知栏 `ACTION_PAUSE_TASK` 会置该状态）
-- 1.4.42~1.4.44 尚未发 release（`keystore.properties` 仍缺，只能发 debug 包）
+
+**发行**
+- v1.4.44 双端已发布（Gitee release `1311931` / GitHub release `445985976`），附件为 arm64 debug 包，SHA256 `e8dd4074…b82f20`；发布流程与踩坑记在 TODO.md「发行版 v1.4.44」

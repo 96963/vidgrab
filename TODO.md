@@ -1,8 +1,8 @@
 # VidGrab 未完成清单与问题
 
-记录时间：2026-11-15 16:40（周日，Asia/Shanghai）
+记录时间：2026-11-15 18:55（周日，Asia/Shanghai）
 当前版本：`1.4.44 / versionCode 51`，debug 包已编译并装机验证；手机上装的是 1.4.44 / 51
-当前代码：本地 `main` 已推 Gitee/GitHub；本轮全部改动 `efde7d4`；1.4.39 代码 `9e07da0`、验证记录 `2e03de2`；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
+当前代码：本地 `main` 已推 Gitee/GitHub；1.4.42~1.4.44 全部改动 `40275c1`（双端 release 已发）；1.4.41 `efde7d4`；1.4.39 代码 `9e07da0`、验证记录 `2e03de2`；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
 工程路径：`E:\claude\REA\VidGrab`
 
 > 明天先看本文档，不需要重新读聊天记录。
@@ -211,6 +211,25 @@
 - 下载页「开始下载」按钮在 `(540,1930)` 点不动，必须用 dump 得到的实际中心点
 
 **B 站页面的一个额外发现**：`browser_data.json` 历史里 `https://www.bilibili.com/video/BV1njHK6GEpT/` 的标题是 **「出错啦! - bilibili.com」**，而 `https://m.bilibili.com/video/BV1njHK6GEpT` 标题才是真实视频名 —— 说明 B 站对 www 桌面版有反爬，实际会重定向到 m 版。排查文件名问题时不要被 www 的「出错啦」标题带偏。
+
+### 发行版 v1.4.44（2026-11-15 已完成，双端）
+
+- 提交：`40275c1`（15 files changed；含 1.4.42~1.4.44 全部改动）
+- 推送：Gitee `f5733a0..40275c1 main`、GitHub `f5733a0..40275c1 main`（GitHub 走本地代理 `ghproxy.py`，端口 8899）
+- Gitee：release id `1311931`，tag `v1.4.44`（Gitee 自动建 tag）
+  - 下载页 `https://gitee.com/WSFSA123/vid-grab/releases/tag/v1.4.44`
+  - 附件 id `3706627`，`VidGrab-1.4.44-arm64-v8a-debug.apk`，82,784,865 B，上传耗时 33.5s
+- GitHub：release id `445985976`，asset id `750689718`
+  - 下载页 `https://github.com/96963/vidgrab/releases/tag/v1.4.44`
+  - API 回读 `size=82784865` `state=uploaded` `digest=sha256:e8dd40748e6f43e7a7953850b74dd2d5d123342f0f7a24b572c78ce817b82f20`，与本地一致
+- 本地 SHA256 `e8dd40748e6f43e7a7953850b74dd2d5d123342f0f7a24b572c78ce817b82f20`
+
+**本轮发版踩坑**
+
+1. **GitHub release 的 `target_commitish` 不能传短 SHA**：传 `40275c1` 会 422 `tag_name is not a valid tag` / `Published releases must have a valid tag`，必须传完整 40 位 SHA（`git rev-parse HEAD`）或分支名
+2. **api.github.com 不要走 `ghproxy.py`**：该代理把 api.github.com 也接到 github.com 的 IP（140.82.113.4），实测返回 301 `Location: https://github.com/repos/...`；直连 `api.github.com`（20.205.243.168）200 正常，创建 release 走直连即可
+3. **GitHub 附件上传（uploads.github.com）会被中途重置**：直连、走代理、`--resolve` 指定 IP 都在 65KB~4MB 处 `curl (55) Send failure: Connection was aborted`；最终用 `--limit-rate 2m --retry 5 --retry-all-errors --retry-delay 3` 重试到第 5 次才成功（限速后稳定跑完 82MB，41.9s）
+4. Gitee 上传仍用 `curl -F "file=@apk"` + `access_token`，一次成功，无 100MB 限制问题
 
 ### 发行版 v1.4.41（2026-11-15 已完成，双端）
 
