@@ -23,6 +23,7 @@ object DownloadSettings {
     private const val KEY_WIFI_ONLY = "wifi_only"
     private const val KEY_SPEED_LIMIT = "speed_limit_kbps"
     private const val KEY_SAVE_TREE = "save_tree_uri"
+    private const val KEY_DESKTOP_MODE = "desktop_mode"
 
     private var prefs: SharedPreferences? = null
 
@@ -68,5 +69,12 @@ object DownloadSettings {
         get() = prefs?.getString(KEY_SAVE_TREE, null)?.takeIf { it.isNotBlank() }
         set(value) {
             prefs?.edit()?.putString(KEY_SAVE_TREE, value?.takeIf { it.isNotBlank() } ?: "")?.apply()
+        }
+
+    /** 浏览器桌面模式：true 时把 WebView 的 UA 换成桌面 Chrome。 */
+    var desktopMode: Boolean
+        get() = prefs?.getBoolean(KEY_DESKTOP_MODE, false) ?: false
+        set(value) {
+            prefs?.edit()?.putBoolean(KEY_DESKTOP_MODE, value)?.apply()
         }
 }

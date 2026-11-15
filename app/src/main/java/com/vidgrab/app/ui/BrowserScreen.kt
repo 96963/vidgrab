@@ -118,6 +118,7 @@ import com.vidgrab.app.core.BrowserViewModel
 import com.vidgrab.app.core.DetectedMedia
 import com.vidgrab.app.core.DetectionLogEntry
 import com.vidgrab.app.core.DirectDownloader
+import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.MediaSniffer
 import com.vidgrab.app.core.SiteSettings
@@ -219,6 +220,9 @@ fun BrowserScreen(
             }
         }
     }
+
+    // 网页想拉起别的 App（bilibili:// / intent:// / market:// …）时先拦住，交给用户决定
+    var pendingAppLink by remember { mutableStateOf<String?>(null) }
 
     val detected by MediaSniffer.items.collectAsStateWithLifecycle()
     val logs by MediaSniffer.logs.collectAsStateWithLifecycle()
@@ -430,19 +434,31 @@ fun BrowserScreen(
                             val target = request.url.toString()
                             val scheme = request.url.scheme?.lowercase()
                             if (request.isForMainFrame && scheme != "http" && scheme != "https") {
-                                // tel: / mailto: / intent:// 交给系统处理，不再静默吞掉
-                                val opened = openExternal(context, request.url)
-                                MediaSniffer.log(
-                                    MediaSniffer.SRC_INTERCEPT,
-                                    target,
-                                    if (opened) "交给外部应用打开" else "没有可打开该链接的应用"
-                                )
-                                if (!opened) {
-                                    Toast.makeText(
-                                        context,
-                                        "没有可打开该链接的应用",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                // tel:/mailto:/sms 是真要交给系统的；其余 scheme（bilibili://、intent://、
+                                // market://、taobao://、weixin://……）一律先拦下来，弹窗问用户要不要跳出去
+                                val systemScheme =
+                                    scheme == "tel" || scheme == "mailto" || scheme == "sms"
+                                if (systemScheme) {
+                                    val opened = openExternal(context, request.url)
+                                    MediaSniffer.log(
+                                        MediaSniffer.SRC_INTERCEPT,
+                                        target,
+                                        if (opened) "交给外部应用打开" else "没有可打开该链接的应用"
+                                    )
+                                    if (!opened) {
+                                        Toast.makeText(
+                                            context,
+                                            "没有可打开该链接的应用",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                } else {
+                                    pendingAppLink = target
+                                    MediaSniffer.log(
+                                        MediaSniffer.SRC_INTERCEPT,
+                                        target,
+                                        "已拦住跳转，等待用户确认"
+                                    )
                                 }
                                 return true
                             }
@@ -528,6 +544,15 @@ fun BrowserScreen(
                     }
 
                     webChromeClient = object : WebChromeClient() {
+                        override fun onReceivedTitle(view: WebView?, title: String?) {
+                            super.onReceivedTitle(view, title)
+                            // <title> 一解析出来就回调，比 onPageFinished 早了整整一轮网络请求。
+                            // 嗅探多发生在加载早期，标题必须这时就更新，否则会把「上一页标题」
+                            // 当成新页面的视频名（B 站首页标题 → 视频文件名的典型症状）。
+                            pageState.title = title.orEmpty()
+                            viewModel.updateTitle(title)
+                        }
+
                         override fun onShowFileChooser(
                             webView: WebView?,
                             callback: ValueCallback<Array<Uri>>?,
@@ -637,6 +662,8 @@ fun BrowserScreen(
                     }
                     loadUrl(viewModel.currentUrl)
                     viewModel.initializeWebView(this)
+                    // 恢复上次选择的手机/电脑模式（UA 已在 ViewModel 里设置好）
+                    viewModel.setDesktopMode(DownloadSettings.desktopMode, reloadNow = false)
                 }
                 wv
             },
@@ -769,7 +796,14 @@ fun BrowserScreen(
                             },
                             onDownload = {
                                 showSheet = false
-                                onDownload(media.url, media.pageTitle ?: pageState.title, false)
+                                // 嗅探快照可能早于页面标题就绪，两者取更靠得住的那个
+                                val titleHint = media.pageTitle?.takeIf { it.isNotBlank() }
+                                    ?: pageState.title?.takeIf { it.isNotBlank() }
+                                com.vidgrab.app.core.DiagLog.w(
+                                    "Title",
+                                    "media.pageTitle=[${media.pageTitle}] pageState.title=[${pageState.title}] hint=[$titleHint]"
+                                )
+                                onDownload(media.url, titleHint, false)
                             },
                             onCopy = {
                                 clipboard.setText(AnnotatedString(media.url))
@@ -783,6 +817,61 @@ fun BrowserScreen(
                 Spacer(Modifier.height(16.dp))
             }
         }
+    }
+
+    // 网页要拉起别的 App：先问一句，再由用户决定跳不跳
+    pendingAppLink?.let { link ->
+        val scheme = Uri.parse(link).scheme?.lowercase().orEmpty()
+        AlertDialog(
+            onDismissRequest = { pendingAppLink = null },
+            title = { Text("网页要打开其他 App") },
+            text = {
+                Column {
+                    Text(
+                        if (scheme.isBlank()) "这个链接要交给别的 App 打开。"
+                        else "这个链接用的是 $scheme:// ，需要交给别的 App 打开。"
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        link,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "选「留在浏览器」可以继续在当前页面嗅探下载。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = link
+                    pendingAppLink = null
+                    val opened = openExternal(context, Uri.parse(target))
+                    MediaSniffer.log(
+                        MediaSniffer.SRC_INTERCEPT,
+                        target,
+                        if (opened) "用户确认跳转外部应用" else "没有可打开该链接的应用"
+                    )
+                    if (!opened) {
+                        Toast.makeText(context, "没有可打开该链接的应用", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("跳转") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    MediaSniffer.log(
+                        MediaSniffer.SRC_INTERCEPT,
+                        link,
+                        "用户选择留在内置浏览器"
+                    )
+                    pendingAppLink = null
+                }) { Text("留在浏览器") }
+            }
+        )
     }
 
     // 底部弹窗：检测日志
@@ -868,6 +957,15 @@ fun BrowserScreen(
                 MenuItem("本站广告拦截设置", "当前站点") {
                     sheet = BrowserSheet.NONE
                     showSiteDialog = true
+                }
+                MenuItem(
+                    if (viewModel.desktopMode) "切换手机模式" else "切换电脑模式",
+                    if (viewModel.desktopMode) "当前为电脑版页面" else "当前为手机版页面"
+                ) {
+                    val target = !viewModel.desktopMode
+                    DownloadSettings.desktopMode = target
+                    viewModel.setDesktopMode(target)
+                    sheet = BrowserSheet.NONE
                 }
                 MenuItem("检测日志", "查看嗅探来源与结果") { sheet = BrowserSheet.LOGS }
                 if (detected.isNotEmpty()) {

@@ -28,8 +28,25 @@ private const val RESUME_MEDIA_JS =
  */
 class BrowserViewModel : ViewModel() {
 
+    /** 桌面模式 UA；手机模式保留 WebView 原始 UA。 */
+    companion object {
+        const val UA_DESKTOP =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    }
+
     /** WebView 实例（首次创建后复用） */
     var webView: WebView? = null
+        private set
+
+    /** WebView 创建前收到的跳转请求，创建后补执行。 */
+    private var pendingLoad: String? = null
+
+    /** 创建时 WebView 自带的手机 UA，切回手机模式时用。 */
+    private var phoneUserAgent: String? = null
+
+    /** 当前是否桌面模式 */
+    var desktopMode: Boolean = false
         private set
 
     /** 当前 URL */
@@ -52,12 +69,32 @@ class BrowserViewModel : ViewModel() {
     fun initializeWebView(webView: WebView) {
         if (this.webView == null) {
             this.webView = webView
+            phoneUserAgent = webView.settings.userAgentString
+            applyUserAgent()
             this.webView?.let { w ->
                 currentUrl = w.url ?: HOME_URL
                 currentTitle = w.title ?: ""
                 canGoBack = w.canGoBack()
             }
+            // onCreate 里通过 intent 传来的地址，可能早于 WebView 创建，这里补上
+            pendingLoad?.let { url ->
+                pendingLoad = null
+                this.webView?.loadUrl(url)
+            }
         }
+    }
+
+    private fun applyUserAgent() {
+        val w = webView ?: return
+        w.settings.userAgentString = if (desktopMode) UA_DESKTOP else phoneUserAgent
+    }
+
+    /** 手机模式 / 电脑模式切换：改 UA 后重新加载当前页，让站点返回对应版式。 */
+    fun setDesktopMode(enabled: Boolean, reloadNow: Boolean = true) {
+        if (desktopMode == enabled) return
+        desktopMode = enabled
+        applyUserAgent()
+        if (reloadNow) webView?.reload()
     }
 
     fun updateUrl(url: String) {
@@ -77,7 +114,12 @@ class BrowserViewModel : ViewModel() {
     }
 
     fun loadUrl(url: String) {
-        webView?.loadUrl(url)
+        val view = webView
+        if (view == null) {
+            pendingLoad = url
+            return
+        }
+        view.loadUrl(url)
     }
 
     fun goBack() {

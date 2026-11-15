@@ -183,9 +183,12 @@ fun HomeScreen(
                 runCatching { YtDlpEngine.fetchInfo(context, initialUrl) }
                     .onSuccess { parsed ->
                         // 嗅探到的媒体常解析不出标题，用页面标题兜底
-                        info = parsed.copy(
-                            title = FileNames.resolveTitle(parsed.title, parsed.webpageUrl, initialTitle)
+                        val resolved = FileNames.resolveTitle(parsed.title, parsed.webpageUrl, initialTitle)
+                        com.vidgrab.app.core.DiagLog.w(
+                            "Title",
+                            "parsed.title=[${parsed.title}] webpageUrl=[${parsed.webpageUrl}] hint=[$initialTitle] -> [$resolved]"
                         )
+                        info = parsed.copy(title = resolved)
                     }
                     .onFailure { setParseError(it.message) }
                 loading = false

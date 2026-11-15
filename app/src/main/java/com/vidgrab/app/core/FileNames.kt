@@ -42,6 +42,18 @@ object FileNames {
     private val hexHash = Regex("""^[0-9a-fA-F]{16,}$""")
     private val tokenLike = Regex("""^[A-Za-z0-9_-]{32,}$""")
 
+    /** yt-dlp 通用解析器对直链只会给出这种占位标题，不能当文件名。 */
+    private val placeholderTitles = setOf(
+        "video", "audio", "media", "download", "index", "playlist", "master",
+        "stream", "file", "untitled", "output", "temp", "tmp", "default", "unknown"
+    )
+
+    /**
+     * 「域名 + 时间戳」兜底名，例如 `upos-sz-mirrorbd.bilivideo.com 20261115-1613`。
+     * yt-dlp 解析直链时拿不到标题就会落到这里，不能再被当成真标题传下去。
+     */
+    private val fallbackLike = Regex("""^[\w.\-]+\s+\d{8}-\d{4}$""")
+
     fun clean(raw: String?): String {
         var text = controlChars.replace(raw.orEmpty(), " ")
         text = illegalChars.replace(text, "_")
@@ -84,25 +96,34 @@ object FileNames {
             }
         }
         if (text.any { it.code > 127 }) return false
+        // 通用解析器给的 video / audio / index 之类占位名，当成“没取到标题”
+        if (text.none { it.isWhitespace() } && text.lowercase() in placeholderTitles) return true
         val ext = text.substringAfterLast('.', "").lowercase()
         return ext in mediaExtensions && text.none { it.isWhitespace() }
     }
 
-    /** 优先用清洗后的真实标题；取不到时退回到“页面标题 + 时间”。 */
+    /** 优先用清洗后的真实标题；取不到时退回到页面标题，再不行才用「域名 + 时间」。 */
     fun resolveTitle(parsed: String?, url: String?, hint: String? = null): String {
         val cleaned = clean(parsed)
         val default = clean(hint)
         return when {
-            cleaned.isNotBlank() && !looksLikeUrl(cleaned, url) && !looksLikeHash(cleaned) -> cleaned
-            default.isNotBlank() && !looksLikeHash(default) -> "$default ${timestamp()}"
+            cleaned.isNotBlank() && !looksLikeUrl(cleaned, url) &&
+                !looksLikeHash(cleaned) && !fallbackLike.matches(cleaned) -> cleaned
+            // 嗅探直链时 yt-dlp 只给占位标题或「域名+时间戳」兜底名，
+            // 页面标题才是用户认得的那个视频名
+            default.isNotBlank() && !looksLikeUrl(default) &&
+                !looksLikeHash(default) && !fallbackLike.matches(default) -> default
             else -> fallbackTitle(url)
         }
     }
 
-    /** 落盘用的最终标题：网址/哈希都不适合当文件名，一律退回「域名 + 时间」。 */
+    /** 落盘用的最终标题：网址/哈希/兜底名都不适合当文件名，一律退回「域名 + 时间」。 */
     fun safeTitle(title: String?, url: String?): String {
         val cleaned = clean(title)
-        return if (cleaned.isNotBlank() && !looksLikeUrl(cleaned, url) && !looksLikeHash(cleaned)) {
+        return if (
+            cleaned.isNotBlank() && !looksLikeUrl(cleaned, url) &&
+            !looksLikeHash(cleaned) && !fallbackLike.matches(cleaned)
+        ) {
             cleaned
         } else {
             fallbackTitle(url)
@@ -127,7 +148,8 @@ object FileNames {
         val cleanedTitle = clean(title)
         val urlStem = clean(urlName).substringBeforeLast('.')
         val base = when {
-            cleanedTitle.isNotBlank() && !looksLikeUrl(cleanedTitle, url) && !looksLikeHash(cleanedTitle) -> cleanedTitle
+            cleanedTitle.isNotBlank() && !looksLikeUrl(cleanedTitle, url) &&
+                !looksLikeHash(cleanedTitle) && !fallbackLike.matches(cleanedTitle) -> cleanedTitle
             urlStem.isNotBlank() && !looksLikeHash(urlStem) -> urlStem
             else -> fallbackTitle(url)
         }.ifBlank { "video" }
