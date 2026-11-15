@@ -11,6 +11,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
@@ -26,8 +27,17 @@ object DirectDownloader {
 
     private const val MULTI_THRESHOLD = 8L * 1024 * 1024
     private const val MULTI_SEGMENTS = 4
+    private const val MULTI_WAIT_SECONDS = 120L
 
-    private val cancelled = ConcurrentHashMap<String, Boolean>()
+    /** 分段下载未完成时留下的标记：带这个标记的 .part 是残缺的分段文件，不能当续传起点。 */
+    private const val MULTI_MARK_SUFFIX = ".multi"
+
+    /**
+     * 取消状态按「运行实例」隔离：每次 download 领一个新代次，
+     * 这样暂停后立刻继续时，新运行不会顺手清掉标记、把上一轮还没退出的线程重新唤醒。
+     * （旧实现用 taskId 做全局布尔，暂停期间的旧线程会在 resume 时复活并继续写同一个 .part）
+     */
+    private val runTokens = RunGenerationTracker()
 
     private val mediaExtensions = setOf(
         "mp4", "webm", "mkv", "mov", "m4v", "flv",
@@ -44,7 +54,16 @@ object DirectDownloader {
     }
 
     fun cancel(taskId: String) {
-        cancelled[taskId] = true
+        // 只标记「当前这一代」，旧代的线程各自看自己的代号
+        runTokens.cancel(taskId)
+    }
+
+    private fun beginRun(taskId: String): Long = runTokens.begin(taskId)
+
+    private fun isCancelled(taskId: String, gen: Long): Boolean = runTokens.isCancelled(taskId, gen)
+
+    private fun endRun(taskId: String, gen: Long) {
+        runTokens.end(taskId, gen)
     }
 
     fun download(
@@ -53,10 +72,17 @@ object DirectDownloader {
         onProgress: (Float, String, String) -> Unit,
         onFile: (String) -> Unit = {}
     ): File {
-        cancelled.remove(task.id)
+        val gen = beginRun(task.id)
         val dir = YtDlpEngine.outputDir(context)
         val baseName = FileNames.directFileName(task.title, task.url)
         val part = File(dir, "$baseName.part")
+        val multiMark = File(dir, "$baseName.part$MULTI_MARK_SUFFIX")
+        // 上一轮多段下载没跑完：.part 已被预分配成完整长度但内容残缺，
+        // 不能拿它当续传起点（否则会算出「已下完」或永远停在原地），直接重下。
+        if (part.exists() && multiMark.exists()) {
+            part.delete()
+            multiMark.delete()
+        }
         // 取消或删除任务时，据此找到未完成的 .part
         onFile(part.absolutePath)
         var existing = if (part.exists()) part.length() else 0L
@@ -87,7 +113,7 @@ object DirectDownloader {
                 connection.getHeaderField("Accept-Ranges")?.contains("bytes", true) == true
             ) {
                 connection.disconnect()
-                return multiDownload(task, dir, baseName, part, total, onProgress)
+                return multiDownload(task, dir, baseName, part, total, onProgress, gen)
             }
 
             val append = code == 206 && existing > 0
@@ -105,7 +131,7 @@ object DirectDownloader {
                 FileOutputStream(part, append).use { output ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
-                        if (cancelled[task.id] == true) {
+                        if (isCancelled(task.id, gen)) {
                             // 保留 .part，重试时可续传
                             throw CancellationException("canceled")
                         }
@@ -130,7 +156,7 @@ object DirectDownloader {
             onProgress(1f, "", "")
             return finalizeFile(part, dir, baseName)
         } finally {
-            cancelled.remove(task.id)
+            endRun(task.id, gen)
             connection.disconnect()
         }
     }
@@ -150,6 +176,7 @@ object DirectDownloader {
     /**
      * 分段并发：写同一个 .part 的不同偏移。中断时删除临时文件（分段文件无法安全续传），
      * 下次从头下载；完成前校验总长度，避免把残缺文件当成品。
+     * 运行期间留一个 .multi 标记，让下一次 download 知道这份 .part 不可信。
      */
     private fun multiDownload(
         task: DownloadTask,
@@ -157,8 +184,11 @@ object DirectDownloader {
         baseName: String,
         part: File,
         total: Long,
-        onProgress: (Float, String, String) -> Unit
+        onProgress: (Float, String, String) -> Unit,
+        gen: Long
     ): File {
+        val mark = File(dir, "$baseName.part$MULTI_MARK_SUFFIX")
+        runCatching { mark.createNewFile() }
         if (part.exists()) part.delete()
         RandomAccessFile(part, "rw").use { it.setLength(total) }
 
@@ -192,7 +222,7 @@ object DirectDownloader {
                                 val buffer = ByteArray(64 * 1024)
                                 var position = start
                                 while (position <= end) {
-                                    if (cancelled[task.id] == true) {
+                                    if (isCancelled(task.id, gen)) {
                                         throw CancellationException("canceled")
                                     }
                                     val read = input.read(buffer, 0, min(buffer.size.toLong(), end - position + 1).toInt())
@@ -221,20 +251,29 @@ object DirectDownloader {
             }
         }
 
-        latch.await()
+        // 读取线程可能卡在 socket 上，不能无限期等着
+        val finished = latch.await(MULTI_WAIT_SECONDS, TimeUnit.SECONDS)
         pool.shutdownNow()
 
+        if (!finished) {
+            part.delete()
+            mark.delete()
+            throw IOException("多线程下载超时（${MULTI_WAIT_SECONDS}s 未完成）")
+        }
         failure.get()?.let { error ->
             part.delete()
+            mark.delete()
             throw if (error is CancellationException) error
             else IOException("多线程下载失败：${error.message ?: error.javaClass.simpleName}")
         }
         if (received.get() != total) {
             part.delete()
+            mark.delete()
             throw IOException("多线程下载不完整（${received.get()} / $total）")
         }
         reportMulti(received.get(), total, startedAt, onProgress)
         onProgress(1f, "", "")
+        mark.delete()
         return finalizeFile(part, dir, baseName)
     }
 
