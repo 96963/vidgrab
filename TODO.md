@@ -1,8 +1,8 @@
 # VidGrab 未完成清单与问题
 
-记录时间：2026-11-15 15:40（周日，Asia/Shanghai）
-当前版本：`1.4.39 / versionCode 46`，debug 包已编译并装机验证；手机上装的是 1.4.39 / 46
-当前代码：本地 `main` 已推 Gitee/GitHub；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
+记录时间：2026-11-15 16:40（周日，Asia/Shanghai）
+当前版本：`1.4.41 / versionCode 48`，debug 包已编译并装机验证；手机上装的是 1.4.41 / 48
+当前代码：本地 `main` 已推 Gitee/GitHub；本轮全部改动 `efde7d4`；1.4.39 代码 `9e07da0`、验证记录 `2e03de2`；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
 工程路径：`E:\claude\REA\VidGrab`
 
 > 明天先看本文档，不需要重新读聊天记录。
@@ -153,6 +153,85 @@
      - 截图：`t1439_j.png`（暂停 + 提示条）、`t1439_l.png`（续播）、`t1439_f.png`
    - 坑：提示条在截图里目测位置不准（目测 y≈1590，实际 **y≈2035**），用 PIL 按行扫蓝色像素才定位到；按错位置点会「点了没反应」
 
+### 1.4.41 / 48：用户三项诉求（已实现并真机验证，双端已发布）
+
+用户原话三条：① 浏览器打开 B 站视频页点「解析」→ 下载文件名不是原本的视频名（给的具体 URL `https://www.bilibili.com/video/BV1njHK6GEpT/`）；② 打开 B 站页直接被踢到 B 站客户端，要加跳转限制，且**「拦截不要只考虑 B 站的，还有许多，可以让用户来确定是否跳转」**；③ **浏览器页面可手机模式和电脑模式自由切换**。1.4.40 为同批修复的中间版本（加了 `onReceivedTitle` 与占位词识别），未单独发布，最终并进 1.4.41。
+
+**① 文件名回退到视频原标题（根因三层，缺一层都修不好）**
+
+1. **页面标题滞后**：嗅探发生在页面加载早期，`pageState.title` 还停在上一个页面（bing 首页）。原代码只在 `onPageStarted` / `onPageFinished` 更新标题，中间没有回调窗口
+   - 修法：改在 **`webChromeClient`** 里加 `onReceivedTitle`，`<title>` 一解析出来就同步 `pageState.title` 与 `viewModel.updateTitle`
+   - **坑**：`onReceivedTitle` 属于 `WebChromeClient`，**不属于 `WebViewClient`**。第一版加进 `webViewClient` 直接 `Unresolved reference 'onReceivedTitle'` 编译失败
+2. **yt-dlp 对直链只给占位标题**：`video` / `audio` 这类占位词被 `looksLikeUrl` 当成「有标题」
+   - 修法：`FileNames` 新增 `placeholderTitles`（video/audio/media/download/index/playlist/master/stream/file/untitled/output/temp/tmp/default/unknown），无空格且小写命中即视为无标题
+3. **最致命一层：yt-dlp 自己预生成的兜底名被当成合法标题**：`YtDlpEngine.fetchInfo` 内部已调 `FileNames.resolveTitle(info.title, info.webpageUrl)`，yt-dlp 拿不到标题时会先生成「域名 + 时间戳」兜底名（如 `upos-sz-mirrorbd.bilivideo.com 20261115-1613`）；`HomeScreen` 二次调 `resolveTitle(parsed.title, …)` 时，这个兜底名既不是 URL、也不是哈希、含空格所以不命中占位词表 → **被原样保留，正确的页面标题反而被丢弃**
+   - 修法：`FileNames` 新增 `private val fallbackLike = Regex("""^[\w.\-]+\s+\d{8}-\d{4}$""")`，在 `resolveTitle` / `safeTitle` / `directFileName` 三处都加 `!fallbackLike.matches(...)` 排除；`resolveTitle` 第二分支由「`"$default ${timestamp()}"`」改为直接 `default`（页面标题优先、不再拼时间戳）
+
+- 日志实证（`Title` 埋点）：
+  ```
+  Title: media.pageTitle=… pageState.title=… hint=[CarPlay的真正用法，国产车机全是垃圾？_哔哩哔哩_bilibili]
+  Title: parsed.title=[cn-zjjh-ct-04-06.bilivideo.com 20261115-1616] hint=[CarPlay的真正用法，国产车机全是垃圾？_哔哩哔哩_bilibili] -> [CarPlay的真正用法，国产车机全是垃圾？]
+  ```
+- 真机结果：下载页标题卡片 = 「CarPlay的真正用法，国产车机全是垃圾？」；点「开始下载」→「下载文件名」对话框默认值同样为该标题（站点后缀 `_哔哩哔哩_bilibili` 自动清掉）
+- 截图：`t1441_l.png`（修复后标题）、`t1441_n.png`（下载对话框默认名）；修复前对照 `t1441_e.png` / `t1441_j.png`（兜底名 `…bilivideo.com 20261115-1608`）
+
+**② 网页跳转外部 App 改为「用户确认」（通用实现，不写死站点）**
+
+- 用户明确否决过第一版方案：加 `DownloadSettings.blockAppLinks` 开关、只处理 B 站 →「不要只考虑 B 站、让用户决定」。该字段与设置页 Switch 已全部回滚删除
+- 最终方案（`BrowserScreen.shouldOverrideUrlLoading`）：
+  - `tel:` / `mailto:` / `sms:` **直接交系统**，不打扰
+  - **其余所有 scheme 一律**设 `pendingAppLink` 并 `return true`（不进 WebView、不 openExternal），弹 `AlertDialog`「网页要打开其他 App」
+  - 对话框正文显示 scheme 与完整链接，并提示「选『留在浏览器』可以继续在当前页面嗅探下载」；按钮「跳转」/「留在浏览器」
+- 真机结果：加载 `https://www.bilibili.com/video/BV1njHK6GEpT/` 后弹出该对话框，正文为 `bilibili://video/117495642000360?page=0&h5awaken=…`；`dumpsys activity activities | grep mResumedActivity` 始终是 `com.vidgrab.app/.MainActivity`，没有被踢到 `com.bilibili.app.in`
+- 截图：`t1441_b.png`（弹窗 + 通知浮窗同屏）、`t1441_c.png`（关闭弹窗后正常停在 www 页）
+- **已知限制（本轮未做）**：登录弹窗 `PopupHost` 的 `shouldOverrideUrlLoading` 仍直接走 `openExternal`，没接询问层。`PopupHost` 是普通 class（Dialog 内自建 WebView），确认框要把状态回传到 Composable 层，需要额外改造，留待下一版
+
+**③ 手机模式 / 电脑模式自由切换**
+
+- `DownloadSettings`：新增 `KEY_DESKTOP_MODE = "desktop_mode"` 与 `var desktopMode: Boolean`（默认 false，重启后恢复上次选择）
+- `BrowserViewModel`：新增 `UA_DESKTOP`（Windows Chrome 122）、`phoneUserAgent` 缓存、`applyUserAgent()`、`setDesktopMode(enabled, reloadNow = true)`（改 UA 后 `reload()` 当前页）
+- `BrowserScreen`：菜单在「本站广告拦截设置」之后插入 `MenuItem(if (viewModel.desktopMode) "切换手机模式" else "切换电脑模式")`；`initializeWebView` 之后调 `setDesktopMode(DownloadSettings.desktopMode, reloadNow = false)` 恢复上次状态
+- 真机结果（双向都验）：
+  - 手机 → 电脑：`m.bilibili.com` 封面流 → `www.bilibili.com` 完整桌面版（导航栏「首页/番剧/直播/游戏中心/会员购/漫画/赛事」+ 播放器 + 右侧推荐栏 + 评论区），截图 `t1441_s.png`
+  - 电脑 → 手机：回到 `m.bilibili.com` 封面流，截图 `t1441_t.png`
+
+**附带修掉的一个坑：`browser_url` 传参在 WebView 未创建时被静默丢弃**
+
+- 原 `BrowserViewModel.loadUrl` 直接 `webView?.loadUrl(url)`；`onCreate` 通过 `browser_url` extra 传 URL 时 WebView 还没创建 → URL 丢了，`am start --es browser_url` 无效、页面停在 bing
+- 修法：`pendingLoad` 挂起，`initializeWebView` 成功后补执行。修好后所有真机测试都可以用
+  `am start -n com.vidgrab.app/.MainActivity --es browser_url "<url>"` 直接进页面，省掉地址栏输入的种种麻烦
+
+**真机操作踩坑（本轮新发现，下次直接照做）**
+
+- **`browser_url` extra 是最可靠的页面加载方式**，别在地址栏输入
+- **`adb shell input keyevent 66` 在 vivo 输入法上不能提交地址栏**（`ImeAction.Go` 不触发），必须点软键盘右下角「前往」，键盘弹起时坐标约 `(985,1820)`
+- **`input text` 输入 URL 时末尾 `/` 会被吞成 `p`**（截图显示 `...iK6GEpT/p`），导致加载失败；用不带末尾斜杠的 URL 或走 `browser_url`
+- **按 BACK 会退回网页而不是收键盘**：键盘已收起时 `keyevent 4` = 网页后退。第一次就是这样把 B 站页面退回了 bing 首页，误判成「页面没加载」
+- **`uiautomator dump` 是定位弹窗按钮的最可靠手段**，本轮目测坐标多次全偏：点 `(510,1367)` 完全没命中「解析」；dump 出的真实 bounds 是「解析」`[615,1729][699,1789]`→中心 `(657,1759)`、「开始下载」按钮中心 `(588,1752)`、菜单项「切换电脑模式」中心 `(192,2267)`；工具栏菜单图标实际在 `(988,158)`（不是 843 也不是 915）；嗅探角标图标在 `(660,143)`
+- 下载页「开始下载」按钮在 `(540,1930)` 点不动，必须用 dump 得到的实际中心点
+
+**B 站页面的一个额外发现**：`browser_data.json` 历史里 `https://www.bilibili.com/video/BV1njHK6GEpT/` 的标题是 **「出错啦! - bilibili.com」**，而 `https://m.bilibili.com/video/BV1njHK6GEpT` 标题才是真实视频名 —— 说明 B 站对 www 桌面版有反爬，实际会重定向到 m 版。排查文件名问题时不要被 www 的「出错啦」标题带偏。
+
+### 发行版 v1.4.41（2026-11-15 已完成，双端）
+
+- 提交：`efde7d4`（6 files changed, 198 insertions(+), 25 deletions(-)）
+- 推送：Gitee `2e03de2..efde7d4 main`、GitHub `2e03de2..efde7d4 main`（走本地代理 `ghproxy.py`）
+- Gitee：release id `1311472`，tag `v1.4.41`（tag 已推），附件 `VidGrab-1.4.41-arm64-v8a-debug.apk`
+  - 下载页 `https://gitee.com/WSFSA123/vid-grab/releases/tag/v1.4.41`
+- GitHub：release id `445914485`，asset id `750357912`
+  - 下载页 `https://github.com/96963/vidgrab/releases/tag/v1.4.41`
+  - API 回读 `size=82999358` `state=uploaded` `digest=sha256:4f7b6028c6ff091456a2cfd249bccb96ab0337f93d1975e9edff9892b3457c00`，与本地一致
+- 附件 `VidGrab-1.4.41-arm64-v8a-debug.apk`，82,999,358 B，SHA256 `4f7b6028c6ff091456a2cfd249bccb96ab0337f93d1975e9edff9892b3457c00`
+- 中文乱码：沿用 Python `json.dumps(ensure_ascii=False)` 写 UTF-8 无 BOM JSON + `curl --data-binary` + `Content-Type: application/json; charset=utf-8`；两端回读 name/body 中文均正常
+
+**本轮新增的两个发布坑**
+
+1. **GitHub `git push` tag 推不上去**：`140.82.112.4` / `140.82.114.4` / `140.82.116.4` 前后都出现过 `SSL_read: unexpected eof` 或 `WinError 10060`；`Test-NetConnection` 通也不等于 `socket.create_connection` 通
+   - 绕过办法：**不推 tag，直接用 GitHub API 创建 release**（省略 `target_commitish`），API 会按 `tag_name` 自动在 `main` 的 HEAD 建 tag
+   - `ghproxy.py` 已加 `CANDIDATE_IPS` + `pick_upstream()`，启动时按顺序探测可用 IP（`140.82.113.4` → `140.82.116.4` → `140.82.114.4` → `140.82.112.4` → `20.247.166.64`，4 秒超时）
+   - **关键**：`Start-Process python` 必须显式 `-RedirectStandardOutput / -RedirectStandardError`，否则看不到 `upstream -> x.x.x.x` 这行，会误判成「代理没启动」（本轮就因此白重试了两轮）
+2. **Gitee PATCH release 必须带 `tag_name`**：只传 `access_token`+`body`+`name` 会 400 `{"messages":["tag_name is missing"]}`；带上 `tag_name` 后 200
+
 ### P2 真机验证进展（四项全部通过，2026-11-15）
 - **亮度手势（通过）**：播放器内左侧上滑 `dumpsys window` 读到 `sbrt=1.0`，下滑 `sbrt=0.05`，再上滑回 `1.0`，双向可调且有 `coerceIn(0.05f,1f)` 下限保护
 - **断点续播（通过）**：退出播放器后 `shared_prefs/player_positions.xml` 写 `<long name="pos_1707754170" value="51350" />`；重进后从 51s 继续，播到结尾再退出时该键被整条清除（`<map />`）
@@ -183,7 +262,7 @@
 - **1.4.28 编译警告清零（第二次）**：`MainActivity` 的 `Icons.Default.List` 换 `Icons.AutoMirrored.Filled.List`；`YtDlpEngine` 的 `line != null` 恒真条件改成 `else` 分支
 
 ### 版本演进（2026-11-14 晚 ~ 2026-11-15）
-`1.4.6/13` → `1.4.7/14` → `1.4.8/15`（启动优化+诊断日志）→ `1.4.9/16`（DiagLog 写文件）→ `1.4.10/17`（播放列表宽容解析）→ `1.4.11/18`（下载 err 日志）→ `1.4.12/19`（标题回填+展开上限 30）→ `1.4.13/20`（私有目录，已回退）→ `1.4.14/21`（回公有+时间戳修正）→ `1.4.15/22`（播放器解码回退+缓冲）→ `1.4.16/23`（清理按钮，已删）→ `1.4.17/24`（读权限版，已回退）→ `1.4.18/25`（Android/media，已回退）→ `1.4.19/26`（回 Download/VidGrab）→ `1.4.20/27`（播放器丢帧诊断）→ `1.4.21/28`（默认优先 AVC）→ `1.4.22/29`（启动懒加载 + 启动图，冷启动 1.3s → 0.53s）→ `1.4.23/30`（debug 模拟崩溃入口）→ `1.4.24/31`（`MediaSniffer.offer` 诊断日志）→ `1.4.25/32`（嗅探入口改整行按钮）→ `1.4.26/33`（菜单加「检测结果」入口、删 `PublicStorage` 死代码、清编译警告）→ `1.4.27/34`（网络类失败自动退避重试 3 次）→ `1.4.28/35`（重试策略抽 `RetryPolicy` + 10 个单测、诊断日志 verbose/8MB 上限、清最后两处编译警告）→ `1.4.29/36`（续传进度单调显示，不再被回调的 0% 打回原点）→ `1.4.30/37`（封面/字幕附加文件发布幂等；README 重写）→ `1.4.31/38`（入口与页面加载时收键盘，修「点了没反应」）→ `1.4.32/39`（嗅探入口移到工具栏角标，底部按钮被 WebView 抢触摸）→ `1.4.33/40`（sheet 组合诊断）→ `1.4.34/41`（诊断降级 verbose + P2 结论回写）→ `1.4.35/42`（「开始下载」按钮文字不再被裁）→ `1.4.36/43`（续传/自动重试的进度不再清零）→ `1.4.37/44`（自动重试补 `unexpected end of stream` / `EOFException` 漏判，单测 11 个）→ `1.4.38/45`（直链多段下载「暂停→继续」不再卡死，取消改按代次 + `.multi` 标记，单测 +7）→ `1.4.39/46`（删「模拟崩溃（仅 debug）」按钮；「切页不断播」改为「切页暂停 + 点击继续播放」，真机验证通过）
+`1.4.6/13` → `1.4.7/14` → `1.4.8/15`（启动优化+诊断日志）→ `1.4.9/16`（DiagLog 写文件）→ `1.4.10/17`（播放列表宽容解析）→ `1.4.11/18`（下载 err 日志）→ `1.4.12/19`（标题回填+展开上限 30）→ `1.4.13/20`（私有目录，已回退）→ `1.4.14/21`（回公有+时间戳修正）→ `1.4.15/22`（播放器解码回退+缓冲）→ `1.4.16/23`（清理按钮，已删）→ `1.4.17/24`（读权限版，已回退）→ `1.4.18/25`（Android/media，已回退）→ `1.4.19/26`（回 Download/VidGrab）→ `1.4.20/27`（播放器丢帧诊断）→ `1.4.21/28`（默认优先 AVC）→ `1.4.22/29`（启动懒加载 + 启动图，冷启动 1.3s → 0.53s）→ `1.4.23/30`（debug 模拟崩溃入口）→ `1.4.24/31`（`MediaSniffer.offer` 诊断日志）→ `1.4.25/32`（嗅探入口改整行按钮）→ `1.4.26/33`（菜单加「检测结果」入口、删 `PublicStorage` 死代码、清编译警告）→ `1.4.27/34`（网络类失败自动退避重试 3 次）→ `1.4.28/35`（重试策略抽 `RetryPolicy` + 10 个单测、诊断日志 verbose/8MB 上限、清最后两处编译警告）→ `1.4.29/36`（续传进度单调显示，不再被回调的 0% 打回原点）→ `1.4.30/37`（封面/字幕附加文件发布幂等；README 重写）→ `1.4.31/38`（入口与页面加载时收键盘，修「点了没反应」）→ `1.4.32/39`（嗅探入口移到工具栏角标，底部按钮被 WebView 抢触摸）→ `1.4.33/40`（sheet 组合诊断）→ `1.4.34/41`（诊断降级 verbose + P2 结论回写）→ `1.4.35/42`（「开始下载」按钮文字不再被裁）→ `1.4.36/43`（续传/自动重试的进度不再清零）→ `1.4.37/44`（自动重试补 `unexpected end of stream` / `EOFException` 漏判，单测 11 个）→ `1.4.38/45`（直链多段下载「暂停→继续」不再卡死，取消改按代次 + `.multi` 标记，单测 +7）→ `1.4.39/46`（删「模拟崩溃（仅 debug）」按钮；「切页不断播」改为「切页暂停 + 点击继续播放」，真机验证通过）→ `1.4.40/47`（中间版本：`onReceivedTitle` 补页面标题早更新、识别 `video`/`audio` 占位标题、`pendingLoad` 修复 `browser_url` 丢参，未单独发布）→ `1.4.41/48`（网页跳转外部 App 改为用户确认（通用，不写死站点）；嗅探直链文件名回退到页面标题（新增 `fallbackLike` 识别「域名+时间戳」兜底名）；手机/电脑模式自由切换，三项均真机验证通过，双端已发布）
 
 ---
 
@@ -286,6 +365,14 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
   - 这是产品取舍，需要用户拍板，不要擅自改回自动恢复
 
 ---
+
+## 3.5 1.4.41 遗留
+
+- [ ] **登录弹窗（PopupHost）未接入「跳转询问」**
+  - 现状：主 WebView 的所有非 `tel:/mailto:/sms:` scheme 都会弹「网页要打开其他 App」让用户选；但第三方登录弹窗 `PopupHost`（`BrowserScreen.kt` 约 1349 行，`private class PopupHost`，Dialog 内自建 WebView）的 `shouldOverrideUrlLoading` 仍是直接 `onExternal(request.url)`
+  - 影响场景：登录流程里若站点用 scheme 唤起 App（如「用哔哩哔哩客户端登录」），在弹窗里会直接跳出，不会询问
+  - 改法方向：给 `PopupHost.show()` 多传一个 `onMaybeExternal: (Uri) -> Boolean` 回调，把 uri 回传给 Composable 层走同一个 `pendingAppLink` 状态；或把确认框改为可复用的 Composable，在 Dialog 内叠一层
+  - 发布正文已如实写成「已知限制」，不要写成已修
 
 ## 4. 1.4.3 已知问题 / 待回归
 

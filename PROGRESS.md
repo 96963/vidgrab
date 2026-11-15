@@ -1,6 +1,6 @@
 # VidGrab 开发进度
 
-更新：2026-11-15（当前版本 1.4.39 / versionCode 46；P1 真机验证基本完成；播放卡顿已定位并修复（AV1 无硬解 → 默认优先 H.264，实测零丢帧）；保存位置按要求固定为公共 Download/VidGrab；冷启动从 1.3s 优化到 0.53s 并加启动图；**P0 已完成**：main 已推 Gitee/GitHub，发行版 v1.4.21、v1.4.37、v1.4.39 双端均已发布；**P2 四项全部真机通过**（亮度手势 / 断点续播 / 崩溃上报 / 嗅探复制分享）；1.4.29~1.4.39 修好续传进度单调、封面发布幂等、自动重试漏判、下载按钮文字裁切、直链多段暂停后续传卡死；并按用户决策删掉「模拟崩溃」按钮、把「切页不断播」改成「切页暂停 + 点击继续播放」，均真机验证通过）
+更新：2026-11-15（当前版本 1.4.41 / versionCode 48；P1 真机验证基本完成；播放卡顿已定位并修复（AV1 无硬解 → 默认优先 H.264，实测零丢帧）；保存位置按要求固定为公共 Download/VidGrab；冷启动从 1.3s 优化到 0.53s 并加启动图；**P0 已完成**：main 已推 Gitee/GitHub，发行版 v1.4.21、v1.4.37、v1.4.39、v1.4.41 双端均已发布；**P2 四项全部真机通过**（亮度手势 / 断点续播 / 崩溃上报 / 嗅探复制分享）；1.4.29~1.4.39 修好续传进度单调、封面发布幂等、自动重试漏判、下载按钮文字裁切、直链多段暂停后续传卡死；并按用户决策删掉「模拟崩溃」按钮、把「切页不断播」改成「切页暂停 + 点击继续播放」，均真机验证通过；**1.4.41 新增三项并全部真机验证**：网页跳外部 App 改为弹窗让用户决定（通用，不写死 B 站）、浏览器嗅探直链的文件名回退到视频原标题、浏览器手机/电脑模式自由切换）
 
 > 明天继续的完整未完成清单与问题见 [`TODO.md`](TODO.md)。
 
@@ -32,6 +32,29 @@
 - [x] Kotlin 业务：yt-dlp 封装、下载队列/前台服务/通知、Compose 三页、WebView 嗅探（含 Cookie/Referer/UA 透传）
 - [x] 编译 APK：`dist/VidGrab-1.0.0-debug-arm64.apk`（package `com.vidgrab.app`，targetSdk 35，仅 arm64-v8a，debug 签名）
 - [x] APK 静态校验：包名/权限/ABI/签名/内置库均正常
+
+## 最新：1.4.41 / 48（2026-11-15，双端已发布）
+
+用户三个诉求全部落地并真机验证通过，详细根因与实证见 [`TODO.md`](TODO.md) 的「1.4.41 / 48」一节。
+
+1. **网页跳转外部 App 改为「用户确认」**
+   - 用户否决了「设置里加开关、只处理 B 站」的第一版方案，要求「拦截不要只考虑 B 站、让用户决定」
+   - 现在 `tel:`/`mailto:`/`sms:` 直接交系统；其余所有 scheme 一律拦下并弹「网页要打开其他 App」，正文显示 scheme 与完整链接，按钮「跳转」/「留在浏览器」
+   - 实测打开 `https://www.bilibili.com/video/BV1njHK6GEpT/` 会弹该框，`mResumedActivity` 始终是 `com.vidgrab.app/.MainActivity`，不再被踢到 `com.bilibili.app.in`
+
+2. **嗅探直链的文件名恢复成视频原标题**
+   - 根因三层：① 嗅探发生在页面早期，页面标题还是上一页的 → 改在 `WebChromeClient.onReceivedTitle` 里同步（加错在 `WebViewClient` 会编译失败）；② yt-dlp 对直链只给 `video`/`audio` 占位标题 → 加 `placeholderTitles`；③ yt-dlp 自己预生成的「域名 + 时间戳」兜底名被上层当成合法标题 → 加 `fallbackLike` 正则排除，并让页面标题优先、不再拼时间戳
+   - 实测：下载页标题卡片和「下载文件名」对话框默认值都是「CarPlay的真正用法，国产车机全是垃圾？」（站点后缀自动清掉）
+
+3. **浏览器手机模式 / 电脑模式自由切换**
+   - 菜单新增「切换电脑模式 / 切换手机模式」，电脑模式把 WebView UA 换成桌面 Chrome 并 `reload()`，选择持久化到 `DownloadSettings`
+   - 实测同一 B 站视频页：手机模式是 `m.bilibili.com` 封面流，电脑模式是 `www.bilibili.com` 完整桌面版（导航栏 + 播放器 + 右侧推荐 + 评论区），双向切换都生效
+
+附带的修复：`browser_url` extra 传 URL 时 WebView 还没创建导致 URL 被静默丢弃 → 改为 `pendingLoad` 挂起后补执行，真机测试从此可以直接 `am start --es browser_url "<url>"` 进页面。
+
+发布：commit `efde7d4`；Gitee release `1311472`、GitHub release `445914485`（asset `750357912`，`size=82999358`，`digest` 与本地 SHA256 `4f7b6028…7c00` 一致）。GitHub tag 因为 IP 不稳推不上去，改用 API 建 release（省略 `target_commitish`），由 GitHub 自动建 tag。
+
+已知限制：登录弹窗 `PopupHost` 没接询问层，见 TODO 的「3.5 1.4.41 遗留」。
 
 ## 真机验证（Xiaomi 24122RKC7C，Android 16，arm64）
 - [x] 安装与首次启动：Python 3.12 / FFmpeg / yt-dlp 正确解压到 no_backup
