@@ -50,6 +50,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -58,6 +59,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -83,12 +86,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -148,6 +150,7 @@ fun BrowserScreen(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
 
     // 网页 <input type=file> 的文件选择器
@@ -282,6 +285,30 @@ fun BrowserScreen(
                     focusManager.clearFocus()
                 })
             )
+            if (detected.isNotEmpty()) {
+                // 嗅探入口放工具栏：底部整行按钮在键盘/布局变化后会被 WebView 抢走触摸，
+                // 工具栏按钮实测可靠，角标显示数量
+                BadgedBox(
+                    badge = {
+                        Badge { Text(detected.size.toString()) }
+                    }
+                ) {
+                    IconButton(onClick = {
+                        com.vidgrab.app.core.DiagLog.w(
+                            "Sniff", "open sheet detected=${detected.size}", verbose = true
+                        )
+                        keyboard?.hide()
+                        focusManager.clearFocus(force = true)
+                        showSheet = true
+                    }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.List,
+                            contentDescription = "检测结果（${detected.size} 个媒体）",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
             IconButton(onClick = { viewModel.reload() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新")
             }
@@ -354,6 +381,10 @@ fun BrowserScreen(
                             pageState.url = url
                             pageState.title = view.title
                             canGoBack = view.canGoBack()
+                            // 导航开始就收起键盘：否则地址栏保持焦点，输入法一直盖住下半屏，
+                            // 嗅探入口点下去看起来「没反应」（其实是弹窗被键盘挡住）
+                            keyboard?.hide()
+                            focusManager.clearFocus(force = true)
                             viewModel.updateUrl(url)
                             viewModel.updateTitle(view.title)
                             viewModel.updateCanGoBack(view.canGoBack())
@@ -626,44 +657,18 @@ fun BrowserScreen(
             }
         }
 
-        // 嗅探结果入口（用整行按钮，保证触摸区域可靠；FAB 在 Column 底部曾被 WebView 区吃掉点击）
-        if (detected.isNotEmpty()) {
-            Button(
-                onClick = {
-                    com.vidgrab.app.core.DiagLog.w("Sniff", "open sheet detected=${detected.size}", verbose = true)
-                    showSheet = true
-                },
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .height(44.dp)
-                    // 诊断用：只观察不消费，确认触摸到底有没有进到 Compose 这一层
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                val pressed = event.changes.count { it.pressed }
-                                com.vidgrab.app.core.DiagLog.w(
-                                    "Sniff",
-                                    "entry touch n=${event.changes.size} pressed=$pressed",
-                                    verbose = true
-                                )
-                            }
-                        }
-                    }
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("检测到 ${detected.size} 个媒体 · 点此查看")
-            }
-        }
+        // 嗅探入口已移到工具栏（BadgedBox 图标）：原先的底部整行按钮在键盘收起/布局变化后
+        // 会被 WebView 的触摸区域抢走点击，真机上表现为「点了没反应」
     }
 
     // 底部弹窗：检测结果
     if (showSheet) {
+        com.vidgrab.app.core.DiagLog.w("Sniff", "sheet composed", verbose = true)
         ModalBottomSheet(
-            onDismissRequest = { showSheet = false },
+            onDismissRequest = {
+                com.vidgrab.app.core.DiagLog.w("Sniff", "sheet dismiss requested", verbose = true)
+                showSheet = false
+            },
             shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
         ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -830,6 +835,8 @@ fun BrowserScreen(
                         "检测结果（${detected.size} 个媒体）",
                         "查看、复制或分享已嗅探到的地址"
                     ) {
+                        keyboard?.hide()
+                        focusManager.clearFocus(force = true)
                         sheet = BrowserSheet.NONE
                         showSheet = true
                     }
