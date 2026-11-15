@@ -61,6 +61,19 @@
   - 代理用完要 kill 并确认 hosts 未被改动
   - 备选可用 IP：`140.82.112.4`（1.2s）、`140.82.114.4`（1.5s）、`20.247.166.64`（2.1s）
 
+### 发行版 v1.4.39（2026-11-15 已完成，双端）
+- 推送：Gitee `b4a7035..9e07da0`、GitHub `b4a7035..9e07da0`，tag `v1.4.39` 两端都已建
+- Gitee release id `1311299`，attachment id `3704735`
+  - 下载页 `https://gitee.com/WSFSA123/vid-grab/releases/tag/v1.4.39`
+  - `curl -I -L` 验证 302 → 200，`Content-Length: 82,727,601`
+- GitHub release id `445885359`，asset id `750217909`
+  - 下载页 `https://github.com/96963/vidgrab/releases/tag/v1.4.39`
+  - API 回读 `digest=sha256:1b41f467b123543b0f30a42be96cf99319e12013ca6b373885ca58cd37307e6b`，与本地一致
+- 附件 `VidGrab-1.4.39-arm64-v8a-debug.apk`，82,727,601 B
+  - SHA256 `1b41f467b123543b0f30a42be96cf99319e12013ca6b373885ca58cd37307e6b`
+- 中文乱码：沿用 Python `json.dumps(ensure_ascii=False)` 写 UTF-8 无 BOM JSON + `curl --data-binary` + `Content-Type: application/json; charset=utf-8`；两端回读 name/body 中文均正常，无 `\uXXXX`、无乱码
+- **新坑**：GitHub `POST /releases` 带 `target_commitish: "9e07da0"`（短 hash）直接 **422 Validation Failed（field: target_commitish）**；tag 已经推上去时**省略该字段**即可（提交到 GitHub 时会按 tag 指向的 commit）
+
 ### 镜像：GitHub 同步（2026-11-15 已完成）
 - `git push github main` 成功：`218eb4d..187c5e2`（GitHub 仓库是公开的，凭证在 `~/.git-credentials` 的 `store` helper 里）
 - GitHub 发行版 `v1.4.21`（release id `445793973`，asset id `749736791`）
@@ -401,7 +414,7 @@ Git：
 
 ## 9. 需要用户拍板的问题
 
-1. 1.4.2「切页不断播」是否接受？如果不接受，改用“回到浏览器点一下继续播放”的手势恢复入口。
+1. ~~1.4.2「切页不断播」是否接受？~~ **已拍板并落地（1.4.39）**：改为「切页暂停 + 底部提示条点击继续播放」，真机验证通过。
 2. B 站无 CC 字幕时，P1 字幕验收是否接受“源无字幕、不产出 srt”，还是必须找一个有字幕的源/登录态来验？
 3. 封面幂等问题是现在修进 1.4.4，还是先记录、等 P2 收尾一起做？
 4. B 站尾部 CDN 超时是否要加自动重试，还是保持手动重试？
