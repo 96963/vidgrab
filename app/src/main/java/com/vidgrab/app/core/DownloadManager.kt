@@ -250,12 +250,15 @@ object DownloadManager {
             )
         }
         notifyProgress(task.id, force = true)
+        var shownProgress = 0f
         try {
             val produced = YtDlpEngine.download(
                 appContext,
                 task,
                 onProgress = { progress, speed, eta ->
-                    update(task.id) { it.copy(progress = progress, speed = speed, eta = eta) }
+                    // 续传时 yt-dlp 偶尔会先回调一个 0%，用本次运行的最大值挡住回退
+                    if (progress > shownProgress + 0.02f) shownProgress = progress
+                    update(task.id) { it.copy(progress = shownProgress, speed = speed, eta = eta) }
                     notifyProgress(task.id)
                 },
                 onFile = { path ->
