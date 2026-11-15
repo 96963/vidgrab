@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val tCreate = android.os.SystemClock.uptimeMillis()
         handleIntent(intent)
         requestNotificationPermission()
         requestStoragePermission()
@@ -72,6 +74,15 @@ class MainActivity : ComponentActivity() {
                 val pending = pendingUrl.value
                 // 首帧渲染完成后再恢复中断的下载，避免阻塞启动
                 LaunchedEffect(Unit) { DownloadManager.resumePending() }
+
+                // 浏览器页与任务页首次进入才组合：BrowserScreen 首帧会创建 WebView，
+                // 冷启动时把它一起组合会让首屏多等 0.3~0.6 秒（表现为启动卡顿/空白）。
+                var browserReady by remember { mutableStateOf(false) }
+                var tasksReady by remember { mutableStateOf(false) }
+                LaunchedEffect(tab) {
+                    if (tab == 1) browserReady = true
+                    if (tab == 2) tasksReady = true
+                }
 
                 Scaffold(
                     bottomBar = {
@@ -120,39 +131,50 @@ class MainActivity : ComponentActivity() {
                                 onTaskStarted = { tab = 2 }
                             )
                         }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(if (tab == 1) 1f else 0f)
-                                .graphicsLayer {
-                                    translationX = if (tab == 1) 0f else 100000f
-                                }
-                        ) {
-                            BrowserScreen(
-                                viewModel = browserViewModel,
-                                isActive = tab == 1,
-                                onUrlChange = { browserViewModel.updateUrl(it) },
-                                onDownload = { url, title, direct ->
-                                    pendingUrl.value = url
-                                    pendingTitle.value = title
-                                    pendingDirect.value = direct
-                                    tab = 0
-                                }
-                            )
+                        if (browserReady) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(if (tab == 1) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationX = if (tab == 1) 0f else 100000f
+                                    }
+                            ) {
+                                BrowserScreen(
+                                    viewModel = browserViewModel,
+                                    isActive = tab == 1,
+                                    onUrlChange = { browserViewModel.updateUrl(it) },
+                                    onDownload = { url, title, direct ->
+                                        pendingUrl.value = url
+                                        pendingTitle.value = title
+                                        pendingDirect.value = direct
+                                        tab = 0
+                                    }
+                                )
+                            }
                         }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(if (tab == 2) 1f else 0f)
-                                .graphicsLayer {
-                                    translationX = if (tab == 2) 0f else 100000f
-                                }
-                        ) {
-                            TasksScreen()
+                        if (tasksReady) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(if (tab == 2) 1f else 0f)
+                                    .graphicsLayer {
+                                        translationX = if (tab == 2) 0f else 100000f
+                                    }
+                            ) {
+                                TasksScreen()
+                            }
                         }
                     }
                 }
             }
+        }
+        // 记录首帧绘制耗时（诊断启动空白用）
+        android.view.Choreographer.getInstance().postFrameCallback {
+            com.vidgrab.app.core.DiagLog.w(
+                "Boot",
+                "first frame ${android.os.SystemClock.uptimeMillis() - tCreate}ms"
+            )
         }
     }
 

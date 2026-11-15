@@ -20,6 +20,7 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        val t0 = android.os.SystemClock.uptimeMillis()
         instance = this
         DiagLog.init(this)
         CrashReporter.install(this)
@@ -29,6 +30,7 @@ class App : Application() {
         CookieStore.init(this)
         DownloadSettings.init(this)
         DownloadManager.init(this)
+        DiagLog.w("Boot", "app init ${android.os.SystemClock.uptimeMillis() - t0}ms")
         // 首次启动在后台解压 Python / FFmpeg，避免拖慢首屏
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             AdBlocker.load(this@App)
