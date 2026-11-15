@@ -42,11 +42,11 @@ B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是
   - 点「取消」→ 任务 `CANCELED`，任务通知被清除；`.part`（3,403,240 B）仍保留在临时目录
   - 遗留小点：取消后 `.part` 未删除，是否按设计保留待确认；重复取消同一任务无副作用
 
-- [ ] **批量/播放列表没有真实入队验证**
-  - 实现：空白拆 URL、`--flat-playlist --dump-json`、`_type=playlist` entries 最多 200、统一 `bestvideo*+bestaudio/best`
-  - 阻塞（2026-11-15 复测仍存在）：ADB `input text` 会经过当前 Fcitx5 输入法，空格/换行不可靠，`aaa%nbbb` 实测被拼音组合成“啊啊啊%”，两个 URL 只留下第一个
-  - 明天先 `ime set` 切到 vivo 输入法再做 ADB 输入测试；或者用单条播放列表 URL（B 站合集/多 P、`seriesdetail?sid=`）验证自动展开，绕开多链接输入
-  - 要核对：任务数量、每个任务标题、并发 2 的排队、失败项是否单独显示
+- [ ] **批量/播放列表真实入队验证**
+  - 批量多链接（2026-11-15 真机通过）：切到 vivo 输入法后 ADB 输入正常；两条本地直链（`/real.mp4`+`/long_real.mp4`）经「批量下载多个链接 / 播放列表」弹窗入队，拆成 2 个任务，`createdAt` 相差 123ms（同时启动），均 DONE：69.9 KB + 545.4 KB，同名自动加「 (1)」后缀不互相覆盖，MediaStore `821448`/`821449`，MP4 解析确认（本地源本身无音轨，只 vide+meta）
+  - 遗留教训：ADB `input text` 在 Fcitx5 下会被拼音组合改写（`aaa%nbbb` → “啊啊啊%”），今后 ADB 输入前先 `ime set com.vivo.ai.ime/.main.IMEService`
+  - 播放列表自动展开：还没验，可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL 验证
+  - 批量弹窗内按钮文案：开始下载（解析中变“处理中…”），空输入时按钮置灰
 
 - [ ] **SAF 保存目录未完成**
   - vivo DocumentsUI 里根目录提示“无法使用此文件夹”；选 `Download` 后“使用这个文件夹”按钮不亮

@@ -120,7 +120,9 @@
   - [x] 直链：32 MB `/range.mp4` 走直链通道完成，落到 `Download/VidGrab`，任务 `DONE`；4 连接路径由代码与完成任务验证（未抓包计数）
   - [x] 通知栏：任务通知 actions=2（暂停/取消），服务通知存在；PendingIntent 已确认
   - [x] 通知栏按钮手动点击（2026-11-15 补验，1.4.3）：展开通知点「暂停」→ `PAUSED` + warning `已暂停` + `.part` 停止增长（5,729,092 B），按钮变「继续」；点「继续」→ `DOWNLOADING`；点「取消」→ `CANCELED`、任务通知清除、`.part` 保留
-  - 限制/未完成：SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；批量弹窗可打开，但 ADB 自动输入多链接会拼成一条，真实批量入队未验证；本地源无字幕轨，字幕/封面只验证勾选项与任务字段（B 站封面发布已在 1.4.3 验证）
+  - [x] 批量多链接真实入队（2026-11-15 补验，1.4.3）：切到 vivo 输入法后 ADB 输入正常；两条本地直链经「批量下载多个链接 / 播放列表」弹窗入队，拆成 2 个任务（`createdAt` 相差 123ms，同时启动），均 `DONE`：69.9 KB + 545.4 KB，同名自动加「 (1)」后缀不互相覆盖；MP4 解析确认（本地源无音轨，仅 vide+meta）
+  - 限制/未完成：播放列表自动展开未验证（可用 B 站合集/多 P 或 `seriesdetail?sid=` 单条 URL）；SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；本地源无字幕轨，字幕/封面只验证勾选项与任务字段（B 站封面发布已在 1.4.3 验证）
+  - 教训：ADB `input text` 在 Fcitx5 下会被拼音组合改写（`aaa%nbbb` → “啊啊啊%”），ADB 输入前先 `ime set com.vivo.ai.ime/.main.IMEService`
 
 构建：`assembleDebug` BUILD SUCCESSFUL（31s）；产物 `dist/VidGrab-1.4.0-debug-universal.apk`（141,201,416 B，SHA-256 `13EC57510FE87C9705B4E96408E222AB333736CE7C462B78D70215611C39DE3A`），versionCode 7 / 1.4.0，debug 签名，arm64-v8a + x86_64。
 
