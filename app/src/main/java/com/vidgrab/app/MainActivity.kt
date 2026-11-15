@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
                             NavigationBarItem(
                                 selected = tab == 2,
                                 onClick = { tab = 2 },
-                                icon = { Icon(Icons.Default.List, contentDescription = null) },
+                                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                                 label = { Text("任务") }
                             )
                         }

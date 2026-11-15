@@ -630,7 +630,7 @@ fun BrowserScreen(
         if (detected.isNotEmpty()) {
             Button(
                 onClick = {
-                    com.vidgrab.app.core.DiagLog.w("Sniff", "open sheet detected=${detected.size}")
+                    com.vidgrab.app.core.DiagLog.w("Sniff", "open sheet detected=${detected.size}", verbose = true)
                     showSheet = true
                 },
                 shape = RoundedCornerShape(10.dp),
@@ -646,7 +646,8 @@ fun BrowserScreen(
                                 val pressed = event.changes.count { it.pressed }
                                 com.vidgrab.app.core.DiagLog.w(
                                     "Sniff",
-                                    "entry touch n=${event.changes.size} pressed=$pressed"
+                                    "entry touch n=${event.changes.size} pressed=$pressed",
+                                    verbose = true
                                 )
                             }
                         }

@@ -395,8 +395,7 @@ object YtDlpEngine {
             } ?: ""
             val etaText = when {
                 eta > 0 -> formatDuration(eta)
-                line != null -> etaRegex.find(line)?.groupValues?.get(1) ?: ""
-                else -> ""
+                else -> line?.let { etaRegex.find(it)?.groupValues?.get(1) } ?: ""
             }
             onProgress((progress / 100f).coerceIn(0f, 1f), speed, etaText)
         }

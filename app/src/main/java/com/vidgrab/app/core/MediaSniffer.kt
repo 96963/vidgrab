@@ -45,7 +45,7 @@ object MediaSniffer {
         forcedKind: String? = null
     ) {
         val url = rawUrl?.trim().orEmpty()
-        DiagLog.w("Sniff", "offer raw=${url.take(120)} cls=${classify(url)}")
+        DiagLog.w("Sniff", "offer raw=${url.take(120)} cls=${classify(url)}", verbose = true)
         if (url.isEmpty() || !url.startsWith("http")) return
         val kind = forcedKind ?: classify(url) ?: return
         if (!seen.add(url)) return
