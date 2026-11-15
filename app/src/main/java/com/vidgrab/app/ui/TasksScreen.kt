@@ -56,6 +56,7 @@ import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadTask
 import com.vidgrab.app.core.PublicStorage
 import com.vidgrab.app.core.YtDlpUpdater
+import com.vidgrab.app.PlayerActivity
 import kotlinx.coroutines.launch
 import com.vidgrab.app.core.TaskState
 import java.io.File
@@ -408,6 +409,24 @@ private fun TaskCard(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    if (supportsLivePlay(task) &&
+                        (task.state == TaskState.QUEUED ||
+                            task.state == TaskState.DOWNLOADING ||
+                            task.state == TaskState.PAUSED ||
+                            task.state == TaskState.PROCESSING)
+                    ) {
+                        TextButton(
+                            onClick = { PlayerActivity.start(context, task.url, task.title) }
+                        ) {
+                            Text(
+                                when (task.state) {
+                                    TaskState.PAUSED -> "边下边播（网络源）"
+                                    TaskState.PROCESSING -> "边下边播（正在导出）"
+                                    else -> "边下边播"
+                                }
+                            )
+                        }
+                    }
                     if (task.state == TaskState.ERROR && !task.error.isNullOrBlank()) {
                         Text(
                             task.error,
@@ -535,6 +554,14 @@ private fun TaskCard(
 
 private val DownloadTask.isFinished: Boolean
     get() = state == TaskState.DONE || state == TaskState.ERROR || state == TaskState.CANCELED
+
+/** 任务地址本身是可播放的流（m3u8 / mp4）时，下载中也能直接看，不必等成品。 */
+private fun supportsLivePlay(task: DownloadTask): Boolean {
+    val url = task.url
+    return url.contains(".m3u8", ignoreCase = true) ||
+        url.contains(".mp4", ignoreCase = true) ||
+        url.contains(".m4v", ignoreCase = true)
+}
 
 /** 已完成任务显示保存位置与文件大小。 */
 private fun fileLine(context: android.content.Context, task: DownloadTask): String? {

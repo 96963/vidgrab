@@ -225,6 +225,9 @@ object YtDlpEngine {
     }
 
     /** 默认格式：优先 H.264（绝大多数机型和系统播放器都能硬解；AV1 无硬解时会严重丢帧）。 */
+    /** HLS（m3u8）没有分轨可挑，直接取最佳流；剧集整批下载用它。 */
+    const val HLS_SELECTOR = "best"
+
     const val DEFAULT_SELECTOR =
         "bestvideo[vcodec^=avc1]+bestaudio/bestvideo[vcodec^=h264]+bestaudio/bestvideo*+bestaudio/best"
 

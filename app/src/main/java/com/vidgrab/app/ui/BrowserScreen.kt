@@ -83,6 +83,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -121,9 +122,12 @@ import com.vidgrab.app.core.DirectDownloader
 import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.FileNames
 import com.vidgrab.app.core.MediaSniffer
+import com.vidgrab.app.core.SiteResolverRegistry
+import com.vidgrab.app.core.SeriesResolver
 import com.vidgrab.app.core.SiteSettings
 import com.vidgrab.app.ui.SniffChips
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.net.URI
 import java.net.URLDecoder
 
@@ -152,6 +156,7 @@ fun BrowserScreen(
     onDownload: (url: String, title: String?, direct: Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
@@ -193,6 +198,8 @@ fun BrowserScreen(
     var canGoBack by remember { mutableStateOf(viewModel.canGoBack) }
     var adBlockEnabled by rememberSaveable { mutableStateOf(viewModel.adBlockEnabled) }
     var settingsVersion by remember { mutableIntStateOf(0) }
+    // 当前页面解析出的剧集（有分集时才有值）
+    var seriesPick by remember { mutableStateOf<SeriesResolver.Series?>(null) }
 
     val pageState = remember { PageState().also { it.url = viewModel.currentUrl } }
 
@@ -967,6 +974,28 @@ fun BrowserScreen(
                     viewModel.setDesktopMode(target)
                     sheet = BrowserSheet.NONE
                 }
+                // 任何网页都可以试：页面里有分集链接就弹选集，没有就提示
+                MenuItem("整剧 / 分集下载", "自动识别本页的分集列表") {
+                    sheet = BrowserSheet.NONE
+                    keyboard?.hide()
+                    focusManager.clearFocus(force = true)
+                    val target = address.ifBlank { viewModel.currentUrl }
+                    Toast.makeText(context, "正在解析分集…", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        val resolved = runCatching {
+                            SiteResolverRegistry.resolveSeries(context, target)
+                        }.getOrNull()
+                        if (resolved != null) {
+                            seriesPick = resolved
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "本页没有找到分集列表",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
                 MenuItem("检测日志", "查看嗅探来源与结果") { sheet = BrowserSheet.LOGS }
                 if (detected.isNotEmpty()) {
                     MenuItem(
@@ -1085,6 +1114,14 @@ fun BrowserScreen(
             dismissButton = {
                 TextButton(onClick = { showSiteDialog = false }) { Text("取消") }
             }
+        )
+    }
+
+    // 剧集选集：认出分集后统一走这个弹窗
+    seriesPick?.let { s ->
+        SeriesPickerDialog(
+            series = s,
+            onDismiss = { seriesPick = null }
         )
     }
 }

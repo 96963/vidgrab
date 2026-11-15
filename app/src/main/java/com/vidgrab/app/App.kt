@@ -9,8 +9,11 @@ import com.vidgrab.app.core.DiagLog
 import com.vidgrab.app.core.DownloadManager
 import com.vidgrab.app.core.DownloadSettings
 import com.vidgrab.app.core.Notifications
+import com.vidgrab.app.core.SiteResolverRegistry
 import com.vidgrab.app.core.SiteSettings
 import com.vidgrab.app.core.YtDlpEngine
+import com.vidgrab.app.core.MrdsResolver
+import com.vidgrab.app.core.SupJavResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +29,9 @@ class App : Application() {
         CrashReporter.install(this)
         Notifications.createChannel(this)
         SiteSettings.init(this)
+        // 注册站点特定解析器
+        SiteResolverRegistry.register(MrdsResolver())
+        SiteResolverRegistry.register(SupJavResolver())
         BrowserStore.init(this)
         CookieStore.init(this)
         DownloadSettings.init(this)

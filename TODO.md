@@ -1,7 +1,7 @@
 # VidGrab 未完成清单与问题
 
 记录时间：2026-11-15 16:40（周日，Asia/Shanghai）
-当前版本：`1.4.41 / versionCode 48`，debug 包已编译并装机验证；手机上装的是 1.4.41 / 48
+当前版本：`1.4.44 / versionCode 51`，debug 包已编译并装机验证；手机上装的是 1.4.44 / 51
 当前代码：本地 `main` 已推 Gitee/GitHub；本轮全部改动 `efde7d4`；1.4.39 代码 `9e07da0`、验证记录 `2e03de2`；1.4.3 修复 `3f5436d`、验证记录 `7791f05`、1.4.2 修复 `892a805`；本文档初版 `dba57ba`
 工程路径：`E:\claude\REA\VidGrab`
 
@@ -231,6 +231,19 @@
    - `ghproxy.py` 已加 `CANDIDATE_IPS` + `pick_upstream()`，启动时按顺序探测可用 IP（`140.82.113.4` → `140.82.116.4` → `140.82.114.4` → `140.82.112.4` → `20.247.166.64`，4 秒超时）
    - **关键**：`Start-Process python` 必须显式 `-RedirectStandardOutput / -RedirectStandardError`，否则看不到 `upstream -> x.x.x.x` 这行，会误判成「代理没启动」（本轮就因此白重试了两轮）
 2. **Gitee PATCH release 必须带 `tag_name`**：只传 `access_token`+`body`+`name` 会 400 `{"messages":["tag_name is missing"]}`；带上 `tag_name` 后 200
+
+### 1.4.42 / 49 ~ 1.4.44 / 51：整剧分集 + 边下边播（已真机验证）
+
+前序 1.4.42 为中间版本（未单独发布），1.4.43 补齐 UA 回退与播放页兜底，1.4.44 加边下边播。
+
+- **通用分集识别 `SeriesResolver`**：把所有 `<a href>` 按「末段数字替换成 `{n}`」的 URL 模板分组，取编号最多的一组；锚文本需像 第N集/第N话/EPn/纯数字。剧名取 h1 → og:title → `<title>` 并清洗。实测 vidhub《小巷人家》40 集、nkdvd《谷雨》24 集、kele47《走马上任》31 集都能弹选集
+- **单集挖流顺序**：页面 m3u8/mp4 直链 → iframe（≤2 层、≤5 个）→ 播放器 JSON 的 `url` → 都没有就把分集页 URL 交给 yt-dlp
+- **入口**：首页解析与内置浏览器菜单「整剧 / 分集下载」共用 `SeriesPickerDialog`（默认全不选、可全选、逐集解析入队）
+- **UA 回退**：`httpGet` 遇 403/404/406/429/451 自动换移动 UA 再试一次；nkdvd 桌面 UA 404、移动 UA 200 实证
+- **`WebStreamProbe`**：HTTP 挖不到且页面含 `player` 时，用不可见 WebView 拦截 `.m3u8/.mp4`，18s 超时、Mutex 串行、用完 destroy。nkdvd 未命中（该站播放地址在自定义播放器里加密计算，且要求登录）
+- **命名**：`fileName` 统一「剧名 第NN集」；集数归一（空/纯数字 → 第NN集，第N集/EPn 原样）。按用户要求**不做强制改名**，落盘仍走 yt-dlp 输出 + 完成时清洗重命名
+- **1.4.44 边下边播**：任务卡在 排队中/下载中/暂停/处理中 且任务 URL 是 m3u8/mp4 时显示「边下边播」，直接播源流、下载继续跑；实测从 16% 起播，8 秒后下载涨到 34%，互不影响。代价是播放再走一份流量；省流量版（本地分片代理）未做
+- **仍未解决**：nkdvd 类站点播放地址拿不到（加密 + 需登录），回落到页面 URL 后 yt-dlp 报「需要登录」；任务偶发入队即 PAUSED（warning「已暂停」、progress 0）触发源仍未定位；1.4.43/1.4.44 改动尚未发 release
 
 ### P2 真机验证进展（四项全部通过，2026-11-15）
 - **亮度手势（通过）**：播放器内左侧上滑 `dumpsys window` 读到 `sbrt=1.0`，下滑 `sbrt=0.05`，再上滑回 `1.0`，双向可调且有 `coerceIn(0.05f,1f)` 下限保护

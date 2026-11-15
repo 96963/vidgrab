@@ -79,6 +79,7 @@ import com.vidgrab.app.core.FormatOption
 import com.vidgrab.app.core.MediaInfo
 import com.vidgrab.app.core.PublicStorage
 import com.vidgrab.app.core.YtDlpEngine
+import com.vidgrab.app.core.SiteResolverRegistry
 import com.vidgrab.app.core.YtDlpUpdater
 import kotlinx.coroutines.launch
 
@@ -123,6 +124,8 @@ fun HomeScreen(
     var showBatch by remember { mutableStateOf(false) }
     var batchText by remember { mutableStateOf("") }
     var batchBusy by remember { mutableStateOf(false) }
+    // 剧集详情页：解析出分集列表后交给统一的选集弹窗
+    var series by remember { mutableStateOf<com.vidgrab.app.core.SeriesResolver.Series?>(null) }
 
     val treeLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -197,19 +200,39 @@ fun HomeScreen(
         }
     }
 
-    fun parse() {
-        val target = url.trim()
-        if (target.isEmpty()) return
+    fun parseSingle(target: String) {
         loading = true
-        info = null
-        error = null
-        errorCanUpdate = false
         scope.launch {
             runCatching { YtDlpEngine.fetchInfo(context, target) }
                 .onSuccess { info = it }
                 .onFailure { setParseError(it.message) }
             loading = false
         }
+    }
+
+    fun parse() {
+        val target = url.trim()
+        if (target.isEmpty() || loading) return
+        info = null
+        error = null
+        errorCanUpdate = false
+        // 剧集详情页：先用站点特定解析器，回退到通用 SeriesResolver
+        if (com.vidgrab.app.core.SeriesResolver.looksLikeSeriesPage(target)) {
+            loading = true
+            scope.launch {
+                val resolved = runCatching {
+                    SiteResolverRegistry.resolveSeries(context, target)
+                }.getOrNull()
+                loading = false
+                if (resolved != null) {
+                    series = resolved
+                } else {
+                    parseSingle(target)
+                }
+            }
+            return
+        }
+        parseSingle(target)
     }
 
     Column(
@@ -315,6 +338,15 @@ fun HomeScreen(
                 pendingDownload = media to format
             }
         }
+    }
+
+    // 剧集选集：默认全不选，勾几集就能先试试
+    series?.let { s ->
+        SeriesPickerDialog(
+            series = s,
+            onDismiss = { series = null },
+            onQueued = { queued -> if (queued > 0) onTaskStarted() }
+        )
     }
 
     pendingDownload?.let { (media, format) ->
