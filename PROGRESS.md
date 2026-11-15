@@ -119,7 +119,8 @@
   - [x] 中文错误：`404` 显示“视频不存在或已被删除（404），请检查链接是否有效”
   - [x] 直链：32 MB `/range.mp4` 走直链通道完成，落到 `Download/VidGrab`，任务 `DONE`；4 连接路径由代码与完成任务验证（未抓包计数）
   - [x] 通知栏：任务通知 actions=2（暂停/取消），服务通知存在；PendingIntent 已确认
-  - 限制/未完成：SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；批量弹窗可打开，但 ADB 自动输入多链接会拼成一条，真实批量入队未验证；本地源无字幕轨，字幕/封面只验证勾选项与任务字段；通知按钮未手动点击
+  - [x] 通知栏按钮手动点击（2026-11-15 补验，1.4.3）：展开通知点「暂停」→ `PAUSED` + warning `已暂停` + `.part` 停止增长（5,729,092 B），按钮变「继续」；点「继续」→ `DOWNLOADING`；点「取消」→ `CANCELED`、任务通知清除、`.part` 保留
+  - 限制/未完成：SAF 目录 vivo DocumentsUI 提示“无法使用此文件夹”，选择 `Download` 时“使用这个文件夹”仍不亮；批量弹窗可打开，但 ADB 自动输入多链接会拼成一条，真实批量入队未验证；本地源无字幕轨，字幕/封面只验证勾选项与任务字段（B 站封面发布已在 1.4.3 验证）
 
 构建：`assembleDebug` BUILD SUCCESSFUL（31s）；产物 `dist/VidGrab-1.4.0-debug-universal.apk`（141,201,416 B，SHA-256 `13EC57510FE87C9705B4E96408E222AB333736CE7C462B78D70215611C39DE3A`），versionCode 7 / 1.4.0，debug 签名，arm64-v8a + x86_64。
 

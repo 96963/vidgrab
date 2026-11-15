@@ -34,10 +34,13 @@
 
 B 站主链路已经通过，以下不是 B 站主链路本身的问题，而是 P1 其他验收项。
 
-- [ ] **通知栏暂停/继续按钮没有真实点击过**
-  - 已确认任务通知有 2 个 Action（取消 + 按状态显示暂停/继续），`NotificationActionReceiver` 已注册，`exported=false`
-  - 未做：下拉通知栏点暂停，核对任务变 `PAUSED`、`.part` 保留；再点继续，核对变 `DOWNLOADING` 并续传
-  - 注意：Android 11 通知 Action 可能需要展开通知才看得到按钮
+- [x] **通知栏暂停/继续/取消按钮已真实点击（2026-11-15 上午补验）**
+  - 测试任务：`http://127.0.0.1:8765/slow2.mp4`（本地 32MB 慢速源，任务 id `d709fa91`），通知 id `33041`，channel `downloads_v2`，`actions=2`
+  - 需先展开通知才看到按钮（vivo Android 11）：暂停/继续按钮 bounds `[90,1323][234,1449]`，取消 `[234,1323][378,1449]`
+  - 点「暂停」→ 任务 `PAUSED`、warning `已暂停`、`.part` 停在 `5,729,092 B` 不再增长，通知文案变「已暂停」、按钮变「继续」
+  - 点「继续」→ 任务 `DOWNLOADING`，通知恢复「暂停/取消」；本测试源不支持 Range，续传从 0 重下（源端限制，非 App bug；昨天 B 站 Range 续传已验证）
+  - 点「取消」→ 任务 `CANCELED`，任务通知被清除；`.part`（3,403,240 B）仍保留在临时目录
+  - 遗留小点：取消后 `.part` 未删除，是否按设计保留待确认；重复取消同一任务无副作用
 
 - [ ] **批量/播放列表没有真实入队验证**
   - 实现：空白拆 URL、`--flat-playlist --dump-json`、`_type=playlist` entries 最多 200、统一 `bestvideo*+bestaudio/best`
